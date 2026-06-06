@@ -1,4 +1,4 @@
-const cacheName = "aerstrong-v35";
+const cacheName = "aerstrong-v43";
 const files = [
   "./",
   "./index.html",
@@ -38,21 +38,20 @@ self.addEventListener("fetch", (event) => {
           caches.open(cacheName).then((cache) => cache.put("./index.html", copy));
           return response;
         })
-        .catch(() => caches.match("./index.html"))
+      .catch(() => caches.match("./index.html"))
     );
     return;
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const network = fetch(request).then((response) => {
+    fetch(request)
+      .then((response) => {
         if (response && response.ok) {
           const copy = response.clone();
           caches.open(cacheName).then((cache) => cache.put(request, copy));
         }
         return response;
-      }).catch(() => cached);
-      return cached || network;
-    })
+      })
+      .catch(() => caches.match(request))
   );
 });

@@ -1,8 +1,9 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.2.0";
+const appVersion = "v1.3.0";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
+const nutritionEnabled = false;
 
 const $ = (selector) => document.querySelector(selector);
 const state = loadState();
@@ -25,6 +26,10 @@ let editingExerciseId = null;
 let exerciseOptionsId = null;
 let pendingDeleteExerciseId = null;
 let activeExerciseAlternatives = [];
+let expandedTemplateIds = new Set();
+let currentViewName = "home";
+let activeSummaryLogId = null;
+let exerciseIntroOpen = false;
 
 const sessionUi = {
   phase: "ready",
@@ -201,6 +206,8 @@ function normalizeMuscleGroups(savedGroups, exercises) {
 function migratedSettings(saved) {
   const settings = { theme: "gold", mode: "dark", weightUnit: "kg", lengthUnit: "cm", soundMuted: false, ...(saved.settings || {}) };
   if (!saved[brandMigrationKey] && settings.theme === "red") settings.theme = "gold";
+  settings.weightUnit = "kg";
+  settings.lengthUnit = "cm";
   return settings;
 }
 
@@ -257,7 +264,50 @@ function defaultWeightForExercise(name) {
 function makeProgramItem(exerciseName, preset) {
   const found = exerciseByName(exerciseName) || state.exercises[0];
   if (found) found.rest = preset.rest;
-  return planItem(found.id, preset.sets, preset.minReps, preset.maxReps, defaultWeightForExercise(exerciseName), preset.increment);
+  return planItem(found.id, preset.sets, preset.minReps, preset.maxReps, defaultWeightForExercise(exerciseName), preset.increment, preset.rest);
+}
+
+function clonePlanItem(item) {
+  return {
+    ...item,
+    id: id(),
+    targetReps: Array.isArray(item.targetReps) ? [...item.targetReps] : Array(Number(item.sets || 0)).fill(item.minReps),
+  };
+}
+
+function duplicateTemplate(templateId) {
+  const template = templateById(templateId);
+  if (!template) return;
+  const copy = {
+    ...template,
+    id: id(),
+    profileId: state.activeProfileId,
+    name: `${template.name} COPIE`,
+    items: (template.items || []).map(clonePlanItem),
+  };
+  state.templates.push(copy);
+  expandedTemplateIds.add(copy.id);
+}
+
+function createPplTemplates() {
+  const preset = goalPreset("muscle");
+  const definitions = [
+    { name: "PULL", exercises: ["Tirage vertical machine poulie", "Rowing poulie basse", "Pull-over poulie", "Face pull", "Curl halteres"] },
+    { name: "PUSH", exercises: ["Developpe couche machine", "Developpe incline halteres", "Developpe militaire halteres", "Elevation laterale halteres", "Extension triceps poulie"] },
+    { name: "LEGS", exercises: ["Presse a cuisses", "Leg curl", "Leg extension", "Souleve de terre roumain", "Mollets debout machine"] },
+  ];
+  const existing = new Set(profileTemplates().map((template) => template.name.toUpperCase()));
+  definitions.forEach((definition) => {
+    if (existing.has(definition.name)) return;
+    const templateId = id();
+    state.templates.push({
+      id: templateId,
+      profileId: state.activeProfileId,
+      name: definition.name,
+      items: definition.exercises.map((name) => makeProgramItem(name, preset)),
+    });
+    expandedTemplateIds.add(templateId);
+  });
 }
 
 function onboardingProgramDefinitions(frequency) {
@@ -488,13 +538,23 @@ function scheduledFor(dateKey) {
   return [...exact, ...repeated];
 }
 
+function isTemplateDoneOnDate(templateId, dateKey, profileId = state.activeProfileId) {
+  return state.logs.some((log) => log.profileId === profileId && log.date === dateKey && log.templateId === templateId && log.finishedAt && !log.archived);
+}
+
+function pendingScheduledFor(dateKey) {
+  return scheduledFor(dateKey).filter((item) => !isTemplateDoneOnDate(item.templateId, dateKey));
+}
+
 function currentTemplate() {
-  const planned = scheduledFor(todayKey)[0];
+  const plannedToday = scheduledFor(todayKey);
+  const planned = pendingScheduledFor(todayKey)[0];
+  if (plannedToday.length && !planned) return null;
   return planned ? templateById(planned.templateId) : profileTemplates()[0];
 }
 
 function todayTemplate() {
-  const planned = scheduledFor(todayKey)[0];
+  const planned = pendingScheduledFor(todayKey)[0];
   return planned ? templateById(planned.templateId) : null;
 }
 
@@ -506,18 +566,20 @@ function currentTemplateForProfile(profileId) {
   return template;
 }
 
-function currentLog() {
-  let log = state.logs.find((item) => item.profileId === state.activeProfileId && item.date === todayKey && !item.archived);
+function currentLog(templateId) {
+  const template = templateId ? templateById(templateId) : currentTemplate();
+  const resolvedTemplateId = template ? template.id : undefined;
+  let log = state.logs.find((item) => item.profileId === state.activeProfileId && item.date === todayKey && item.templateId === resolvedTemplateId && !item.archived && !item.finishedAt);
   if (!log) {
-    const template = currentTemplate();
     log = {
       id: id(),
       profileId: state.activeProfileId,
       date: todayKey,
-      templateId: template ? template.id : undefined,
+      templateId: resolvedTemplateId,
       entries: [],
       currentExerciseIndex: 0,
       currentSetIndex: 0,
+      introSeenIndex: -1,
       startedAt: new Date().toISOString(),
       exitReason: null,
     };
@@ -527,7 +589,7 @@ function currentLog() {
 }
 
 function currentLogForProfile(profileId, templateId) {
-  let log = state.logs.find((item) => item.profileId === profileId && item.date === todayKey && item.templateId === templateId && !item.archived);
+  let log = state.logs.find((item) => item.profileId === profileId && item.date === todayKey && item.templateId === templateId && !item.archived && !item.finishedAt);
   if (!log) {
     log = {
       id: id(),
@@ -537,6 +599,7 @@ function currentLogForProfile(profileId, templateId) {
       entries: [],
       currentExerciseIndex: 0,
       currentSetIndex: 0,
+      introSeenIndex: -1,
       startedAt: new Date().toISOString(),
       exitReason: null,
       togetherSession: togetherMode,
@@ -582,6 +645,10 @@ function isLogComplete(log) {
     const entry = log.entries.find((candidate) => candidate.planItemId === item.id);
     return entry && entry.completed && entry.completed.every(Boolean);
   });
+}
+
+function completedSetCount(log) {
+  return (log.entries || []).reduce((total, entry) => total + ((entry.completed || []).filter(Boolean).length), 0);
 }
 
 function nextTarget(item, repsDone) {
@@ -737,7 +804,6 @@ function renderExerciseFormHelpers() {
   const groups = allMuscleGroups();
   $("#exerciseFamily").innerHTML = groups.map((group) => `<option value="${escapeHtml(group)}">${escapeHtml(group)}</option>`).join("");
   $("#exerciseFamily").value = groups.includes(previousFamily) ? previousFamily : "Dos";
-  $("#customFamilyWrap").hidden = true;
   const currentId = $("#exerciseEditId").value;
   const alternatives = state.exercises.filter((exerciseItem) => exerciseItem.id !== currentId && !activeExerciseAlternatives.includes(exerciseItem.name));
   $("#exerciseAlternativePick").innerHTML = `<option value="">Ajouter une alternative...</option>${groupedExercises(alternatives).map((section) => `
@@ -765,7 +831,6 @@ function editExercise(exerciseItem) {
   $("#exerciseEquipment").value = exerciseItem.equipment;
   renderExerciseFormHelpers();
   $("#exerciseFamily").value = allMuscleGroups().includes(exerciseItem.family) ? exerciseItem.family : "Autre";
-  $("#customFamilyWrap").hidden = true;
   setRestPicker("exerciseRest", exerciseItem.rest);
   $("#exerciseSubmitButton").textContent = "Modifier l'exercice";
   $("#cancelExerciseEdit").hidden = false;
@@ -827,10 +892,38 @@ function daysSince(dateValue) {
   return `il y a ${diff} jours`;
 }
 
+function scheduleStatus(item, dateKey) {
+  const active = state.logs.some((log) => log.profileId === state.activeProfileId && log.date === dateKey && log.templateId === item.templateId && !log.archived && !log.finishedAt);
+  const done = isTemplateDoneOnDate(item.templateId, dateKey);
+  if (done) return "faite";
+  if (active) return "en cours";
+  return "prevue";
+}
+
+function scheduleStatusPill(item, dateKey) {
+  const status = scheduleStatus(item, dateKey);
+  return `<span class="status-pill schedule-${status.replace(" ", "-")}">${status}</span>`;
+}
+
 function renderTodayDashboard() {
   const panel = $("#todayDashboard");
   if (!panel) return;
   const template = todayTemplate();
+  const plannedToday = scheduledFor(todayKey);
+  if (!template && plannedToday.length && plannedToday.every((item) => isTemplateDoneOnDate(item.templateId, todayKey))) {
+    const doneNames = plannedToday.map((item) => templateById(item.templateId)).filter(Boolean).map((item) => item.name).join(" / ");
+    panel.innerHTML = `
+      <article class="today-card empty-plan validated-plan">
+        <div>
+          <p class="label">Aujourd'hui</p>
+          <h2>Seance validee</h2>
+          <p>${escapeHtml(doneNames)} est terminee pour aujourd'hui.</p>
+        </div>
+        <span class="status-pill">Fait</span>
+      </article>
+    `;
+    return;
+  }
   if (!template) {
     panel.innerHTML = `
       <article class="today-card empty-plan">
@@ -890,6 +983,15 @@ function todayNutritionEntry() {
 function renderNutritionPanel() {
   const panel = $("#nutritionPanel");
   if (!panel) return;
+  if (!nutritionEnabled) {
+    panel.innerHTML = `
+      <article class="nutrition-card">
+        <strong>Nutrition arrive prochainement</strong>
+        <p class="muted-text">Cette partie est mise en pause le temps de construire un suivi plus clair et plus utile.</p>
+      </article>
+    `;
+    return;
+  }
   const settings = nutritionSettings();
   const entry = todayNutritionEntry();
   const history = profileNutrition().slice(0, 7);
@@ -1119,10 +1221,17 @@ function renderProfiles() {
   addButton.disabled = state.profiles.length >= 3;
 }
 
-function showView(name) {
+function showView(name, options = {}) {
+  const push = options.push !== false;
+  if (!views[name]) name = "home";
   Object.entries(views).forEach(([viewName, view]) => {
     if (view) view.classList.toggle("active", viewName === name);
   });
+  if (push && currentViewName !== name) {
+    history.pushState({ view: name }, "", window.location.pathname + window.location.search);
+  }
+  currentViewName = name;
+  if (name === "training") renderTraining();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -1165,26 +1274,44 @@ function renderTraining() {
     return;
   }
 
-  const template = currentTemplate();
-  const log = currentLog();
-  if (!template) {
-    $("#trainingScreen").innerHTML = `<p class="empty">Cree une seance dans Builder pour commencer.</p>`;
-    return;
+  if (activeSummaryLogId) {
+    const summaryLog = state.logs.find((log) => log.id === activeSummaryLogId);
+    if (summaryLog && summaryLog.finishedAt && completedSetCount(summaryLog) > 0) {
+      renderSessionSummary(summaryLog);
+      return;
+    }
+    if (summaryLog && completedSetCount(summaryLog) === 0) summaryLog.archived = true;
+    activeSummaryLogId = null;
   }
 
-  if (log.finishedAt) {
+  const template = currentTemplate();
+  if (!template) {
+    $("#trainingScreen").innerHTML = `<p class="empty">Aucune seance active. Planifie une seance dans Builder ou reviens demain.</p>`;
+    return;
+  }
+  const log = currentLog(template.id);
+
+  if (log.finishedAt && completedSetCount(log) > 0) {
     renderSessionSummary(log);
     return;
   }
 
   const item = currentPlanItem(log);
   if (!item) {
-    renderSessionSummary(log);
+    if (completedSetCount(log) > 0) {
+      finishLog(log, null);
+      renderSessionSummary(log);
+    } else {
+      log.archived = true;
+      saveState();
+      $("#trainingScreen").innerHTML = `<p class="empty">Aucune serie validee sur cette seance.</p>`;
+    }
     return;
   }
 
   const exercise = exerciseById(item.exerciseId);
   const entry = entryFor(log, item);
+  maybeShowExerciseIntro(log, item, exercise, entry, template);
   const setIndex = Math.min(log.currentSetIndex, item.sets - 1);
   const target = item.targetReps[setIndex] || item.minReps;
   const progress = `${log.currentExerciseIndex + 1}/${template.items.length}`;
@@ -1346,13 +1473,32 @@ function renderTogetherProfileCard(profileId, template) {
   `;
 }
 
+function maybeShowExerciseIntro(log, item, exerciseItem, entry, template) {
+  if (currentViewName !== "training") return;
+  if (!log || !item || log.finishedAt || exerciseIntroOpen) return;
+  if (log.introSeenIndex === log.currentExerciseIndex) return;
+  if (log.currentSetIndex !== 0) return;
+  const dialog = $("#exerciseIntroDialog");
+  if (!dialog || dialog.open) return;
+  const openDialog = document.querySelector("dialog[open]");
+  if (openDialog && openDialog !== dialog) return;
+  exerciseIntroOpen = true;
+  $("#exerciseIntroStep").textContent = `Exercice ${log.currentExerciseIndex + 1}/${template.items.length}`;
+  $("#exerciseIntroName").textContent = entry.performedExerciseName || (exerciseItem && exerciseItem.name) || "Exercice";
+  $("#exerciseIntroMeta").textContent = `${item.sets} series - ${item.minReps}/${item.maxReps} reps - ${entry.weight || item.weight || 0} ${state.settings.weightUnit}`;
+  setTimeout(() => {
+    if (dialog.showModal && !dialog.open) dialog.showModal();
+  }, 0);
+}
+
 function renderSessionSummary(log) {
   const stats = logStats(log);
   $("#trainingScreen").innerHTML = `
     <section class="summary-panel">
       <p class="label">Seance terminee</p>
-      <div class="celebration-mark">FORGE COMPLETE</div>
+      <div class="celebration-mark">STAY STRONG</div>
       <h2>${escapeHtml((templateById(log.templateId) && templateById(log.templateId).name) || "Seance")}</h2>
+      <p class="congrats"><strong>Stay Strong.</strong></p>
       <p class="congrats">Belle séance. Tu as posé une brique de plus, proprement.</p>
       <div class="summary-grid">
         <div><span>Tonnage</span><strong>${Math.round(stats.tonnage)} kg</strong></div>
@@ -1367,7 +1513,7 @@ function renderSessionSummary(log) {
         `).join("")}
       </div>
       ${log.exitReason ? `<p class="hint">Sortie anticipee : ${escapeHtml(log.exitReason)}</p>` : ""}
-      <button class="primary-button" id="newSession" type="button">Nouvelle seance</button>
+      <button class="primary-button" id="closeSummary" type="button">Terminer</button>
     </section>
   `;
 }
@@ -1375,15 +1521,22 @@ function renderSessionSummary(log) {
 function renderBuilder() {
   const templates = profileTemplates();
   $("#scheduleTemplate").innerHTML = templates.map((template) => `<option value="${template.id}">${escapeHtml(template.name)}</option>`).join("");
-  $("#templateList").innerHTML = templates.map((template) => `
+  $("#templateList").innerHTML = templates.map((template) => {
+    const expanded = expandedTemplateIds.has(template.id);
+    return `
     <article class="item-card builder-card">
       <div class="item-head">
-        <strong>${escapeHtml(template.name)}</strong>
+        <button class="template-toggle ${expanded ? "active" : ""}" data-toggle-template="${template.id}" type="button" aria-expanded="${expanded}">
+          <span class="template-title"><strong>${escapeHtml(template.name)}</strong><small>${template.items.length} exos</small></span>
+          <span class="chevron" aria-hidden="true">V</span>
+        </button>
         <div class="button-row tight-row">
           <span class="status-pill">${template.items.length} exos</span>
           <button class="small-button" data-edit-template="${template.id}" type="button">Modifier</button>
+          <button class="small-button" data-duplicate-template="${template.id}" type="button">Dupliquer</button>
         </div>
       </div>
+      <div class="template-body ${expanded ? "active" : ""}">
       <form class="mini-grid" data-add-item="${template.id}">
         <label class="exercise-pick">Exercice<select name="exerciseId">${exerciseSelectOptions()}</select></label>
         <label>Series<input name="sets" inputmode="numeric" min="1" type="number" value="4"></label>
@@ -1403,11 +1556,13 @@ function renderBuilder() {
       <div class="template-items">
         ${template.items.map((item) => {
           const exercise = exerciseById(item.exerciseId);
-          return `<div class="set-row"><span>${escapeHtml(exercise && exercise.name)} - ${item.sets} series - ${item.minReps}/${item.maxReps} reps - ${item.weight} kg - repos ${restLabel(item.rest || (exercise && exercise.rest) || 0)}</span><div class="button-row tight-row"><button class="small-button" data-edit-item="${template.id}:${item.id}" type="button">Modifier</button><button class="small-button danger" data-remove-item="${template.id}:${item.id}" type="button">Suppr.</button></div></div>`;
+          return `<div class="set-row"><span>${escapeHtml(exercise && exercise.name)} - ${item.sets} series - ${item.minReps}/${item.maxReps} reps - ${item.weight} kg - repos ${restLabel(item.rest || (exercise && exercise.rest) || 0)}</span><div class="button-row tight-row"><button class="small-button" data-move-item="${template.id}:${item.id}:-1" type="button">↑</button><button class="small-button" data-move-item="${template.id}:${item.id}:1" type="button">↓</button><button class="small-button" data-edit-item="${template.id}:${item.id}" type="button">Modifier</button><button class="small-button danger" data-remove-item="${template.id}:${item.id}" type="button">Suppr.</button></div></div>`;
         }).join("")}
       </div>
+      </div>
     </article>
-  `).join("");
+  `;
+  }).join("");
 
   const exercises = state.exercises.filter((item) => {
     const equipmentMatch = equipmentFilter === "Tous" || item.equipment === equipmentFilter;
@@ -1452,7 +1607,7 @@ function renderCalendar() {
   const items = [...profileSchedule()].sort((a, b) => a.date.localeCompare(b.date));
   $("#calendarList").innerHTML = items.map((item) => {
     const template = templateById(item.templateId);
-    return `<article class="item-card set-row"><span>${item.date} - ${escapeHtml(template && template.name)}${item.repeatWeekly ? " - chaque semaine" : ""}</span><button class="small-button danger" data-delete-schedule="${item.id}" type="button">Suppr.</button></article>`;
+    return `<article class="item-card set-row"><span>${item.date} - ${escapeHtml(template && template.name)}${item.repeatWeekly ? " - chaque semaine" : ""}</span><div class="button-row tight-row">${scheduleStatusPill(item, item.date)}<button class="small-button danger" data-delete-schedule="${item.id}" type="button">Suppr.</button></div></article>`;
   }).join("") || `<p class="empty">Aucune seance planifiee.</p>`;
 }
 
@@ -1468,7 +1623,7 @@ function renderWeekCalendar() {
   $("#calendarList").innerHTML = `<div class="week-grid">${days.map((date) => {
     const key = localDateKey(date);
     const planned = scheduledFor(key);
-    return `<article class="day-card ${key === todayKey ? "today" : ""}"><span>${date.toLocaleDateString("fr-FR", { weekday: "short" })}</span><strong>${date.getDate()}</strong>${planned.map((item) => `<p>${escapeHtml((templateById(item.templateId) && templateById(item.templateId).name) || "Seance")}</p>`).join("") || `<p>Repos</p>`}</article>`;
+    return `<article class="day-card ${key === todayKey ? "today" : ""}"><span>${date.toLocaleDateString("fr-FR", { weekday: "short" })}</span><strong>${date.getDate()}</strong>${planned.map((item) => `<p>${escapeHtml((templateById(item.templateId) && templateById(item.templateId).name) || "Seance")} ${scheduleStatusPill(item, key)}</p>`).join("") || `<p>Repos</p>`}</article>`;
   }).join("")}</div>`;
 }
 
@@ -1482,7 +1637,7 @@ function renderPlannerCalendar() {
     const key = localDateKey(date);
     const planned = scheduledFor(key);
     if (!planned.length) return "";
-    return `<article class="planner-row"><div><span>${date.toLocaleDateString("fr-FR", { weekday: "long" })}</span><strong>${date.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</strong></div><div class="planner-sessions">${planned.map((item) => `<span>${escapeHtml((templateById(item.templateId) && templateById(item.templateId).name) || "Seance")}</span>`).join("")}</div></article>`;
+    return `<article class="planner-row"><div><span>${date.toLocaleDateString("fr-FR", { weekday: "long" })}</span><strong>${date.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</strong></div><div class="planner-sessions">${planned.map((item) => `<span>${escapeHtml((templateById(item.templateId) && templateById(item.templateId).name) || "Seance")} ${scheduleStatusPill(item, key)}</span>`).join("")}</div></article>`;
   }).join("") || `<p class="empty">Aucune seance dans les 3 prochaines semaines.</p>`;
 }
 
@@ -1537,11 +1692,27 @@ function renderTracking() {
     return;
   }
 
-  const completed = profileLogs().filter((log) => log.entries.some((entry) => entry.completed && entry.completed.some(Boolean)));
   const rms = bestOneRms();
+  const tonnage = recentTonnageData();
+  const volume = muscleVolumeData();
+  const performances = lastExercisePerformances();
   $("#trackingPanel").innerHTML = `
     <section class="stack">
       ${profileManagerHtml()}
+      <article class="item-card">
+        <div class="item-head">
+          <strong>Tonnage recent</strong>
+          <span class="status-pill">${tonnage.length} seances</span>
+        </div>
+        ${barChartHtml(tonnage, "Aucune seance terminee pour afficher le tonnage.")}
+      </article>
+      <article class="item-card">
+        <div class="item-head">
+          <strong>Volume par groupe</strong>
+          <span class="status-pill">30 jours</span>
+        </div>
+        ${barChartHtml(volume, "Aucun volume recent.")}
+      </article>
       <article class="item-card">
         <div class="item-head">
           <strong>RM estimees</strong>
@@ -1551,10 +1722,15 @@ function renderTracking() {
           ${rms.map((item) => `<div><span>${escapeHtml(item.name)}</span><strong>${Math.round(item.rm)} kg</strong><p>${item.weight} kg x ${item.reps}</p></div>`).join("") || `<p class="empty">Aucune RM estimee pour l'instant.</p>`}
         </div>
       </article>
-      ${completed.length ? completed.map((log) => {
-    const stats = logStats(log);
-    return `<article class="item-card"><strong>${log.date} - ${escapeHtml((templateById(log.templateId) && templateById(log.templateId).name) || "Seance")}</strong><div class="summary-grid"><div><span>Tonnage</span><strong>${Math.round(stats.tonnage)} kg</strong></div><div><span>Calories</span><strong>${stats.calories} kcal</strong></div></div>${stats.perExercise.map((item) => `<p>${escapeHtml(item.name)} - ${Math.round(item.tonnage)} kg</p>`).join("")}</article>`;
-  }).join("") : `<p class="empty">Les performances apparaitront apres tes seances.</p>`}
+      <article class="item-card">
+        <div class="item-head">
+          <strong>Dernieres performances</strong>
+          <span class="status-pill">${performances.length} exos</span>
+        </div>
+        <div class="performance-list">
+          ${performances.map((item) => `<div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.date)} - ${item.weight} kg - ${escapeHtml(item.reps)} reps</span></div>`).join("") || `<p class="empty">Les performances apparaitront apres tes seances.</p>`}
+        </div>
+      </article>
     </section>
   `;
   renderProfiles();
@@ -1590,6 +1766,69 @@ function bestOneRms() {
     });
   });
   return [...best.values()].sort((a, b) => b.rm - a.rm);
+}
+
+function completedLogs() {
+  return profileLogs()
+    .filter((log) => log.finishedAt && completedSetCount(log) > 0)
+    .sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt));
+}
+
+function recentTonnageData(limit = 8) {
+  return completedLogs().slice(-limit).map((log) => {
+    const template = templateById(log.templateId);
+    const stats = logStats(log);
+    return {
+      label: `${log.date.slice(5)} ${template ? template.name : "Seance"}`,
+      value: Math.round(stats.tonnage),
+    };
+  });
+}
+
+function muscleVolumeData(limitDays = 30) {
+  const since = new Date();
+  since.setDate(since.getDate() - limitDays);
+  const volume = new Map();
+  completedLogs().forEach((log) => {
+    const date = new Date(`${log.date}T12:00:00`);
+    if (date < since) return;
+    (log.entries || []).forEach((entry) => {
+      const exerciseItem = exerciseById(entry.exerciseId);
+      const family = (exerciseItem && exerciseItem.family) || "Autre";
+      const sets = (entry.completed || []).filter(Boolean).length;
+      volume.set(family, (volume.get(family) || 0) + sets);
+    });
+  });
+  return [...volume.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+}
+
+function lastExercisePerformances() {
+  const latest = new Map();
+  completedLogs().forEach((log) => {
+    (log.entries || []).forEach((entry) => {
+      const reps = (entry.reps || []).filter((rep, index) => entry.completed && entry.completed[index]);
+      if (!reps.length) return;
+      latest.set(entry.performedExerciseName, {
+        name: entry.performedExerciseName,
+        date: log.date,
+        weight: entry.weight,
+        reps: reps.join("/"),
+      });
+    });
+  });
+  return [...latest.values()].slice(-12).reverse();
+}
+
+function barChartHtml(items, emptyText) {
+  if (!items.length) return `<p class="empty">${emptyText}</p>`;
+  const max = Math.max(...items.map((item) => Number(item.value || 0)), 1);
+  return `<div class="bar-chart">${items.map((item) => `
+    <div class="bar-row">
+      <span>${escapeHtml(item.label)}</span>
+      <div><i style="width:${Math.max(5, Math.round((item.value / max) * 100))}%"></i></div>
+      <strong>${escapeHtml(item.value)}</strong>
+    </div>
+  `).join("")}</div>`;
 }
 
 function formatTime(totalSeconds) {
@@ -1648,7 +1887,9 @@ function clearTogetherTimers() {
 }
 
 function completeCurrentSet() {
-  const log = currentLog();
+  const template = currentTemplate();
+  if (!template) return;
+  const log = currentLog(template.id);
   const item = currentPlanItem(log);
   if (!item) return;
   const entry = entryFor(log, item);
@@ -1701,6 +1942,8 @@ function finishLog(log, reason) {
   sessionUi.phase = "ready";
   log.finishedAt = new Date().toISOString();
   log.exitReason = reason;
+  activeSummaryLogId = completedSetCount(log) > 0 ? log.id : null;
+  if (completedSetCount(log) === 0) log.archived = true;
   applyProgression(log);
   saveState();
 }
@@ -1721,8 +1964,9 @@ function applyProgression(log) {
 function openAlternativeDialog(planItemId) {
   activeExercisePlanId = planItemId;
   selectedAlternativeName = "";
-  const log = currentLog();
-  const template = templateById(log.templateId);
+  const template = currentTemplate();
+  if (!template) return;
+  const log = currentLog(template.id);
   const item = template.items.find((candidate) => candidate.id === planItemId);
   const entry = entryFor(log, item);
   const exerciseItem = exerciseById(item.exerciseId);
@@ -1765,7 +2009,7 @@ function updateVersionLabels() {
 function showUpdateAvailable() {
   const button = $("#applyUpdateButton");
   if (button) button.hidden = false;
-  updatePwaStatus("Une mise a jour est prete. Installe-la puis l'app redemarrera.");
+  updatePwaStatus("Une mise a jour est prete. Installe-la, puis ferme et rouvre l'app si l'affichage ne change pas.");
 }
 
 function exportData() {
@@ -1822,11 +2066,21 @@ document.querySelector("main").addEventListener("click", (event) => {
   showView(button.dataset.view);
 });
 
+window.addEventListener("popstate", (event) => {
+  showView((event.state && event.state.view) || "home", { push: false });
+});
+
 $("#builderModes").addEventListener("click", (event) => {
   const button = event.target.closest("[data-builder-mode]");
   if (!button) return;
   builderMode = button.dataset.builderMode;
   renderBuilderPanes();
+});
+
+$("#createPplTemplates").addEventListener("click", () => {
+  createPplTemplates();
+  saveState();
+  render();
 });
 
 $("#openSettings").addEventListener("click", () => {
@@ -1944,7 +2198,9 @@ $("#trainingScreen").addEventListener("click", (event) => {
 
   const setButton = event.target.closest("[data-jump-set]");
   if (setButton) {
-    currentLog().currentSetIndex = Number(setButton.dataset.jumpSet);
+    const template = currentTemplate();
+    if (!template) return;
+    currentLog(template.id).currentSetIndex = Number(setButton.dataset.jumpSet);
     sessionUi.phase = "ready";
     saveState();
     renderTraining();
@@ -1954,7 +2210,9 @@ $("#trainingScreen").addEventListener("click", (event) => {
   if (alternative) openAlternativeDialog(alternative.dataset.alternative);
 
   if (event.target.closest("#skipExercise")) {
-    const log = currentLog();
+    const template = currentTemplate();
+    if (!template) return;
+    const log = currentLog(template.id);
     log.currentExerciseIndex += 1;
     log.currentSetIndex = 0;
     saveState();
@@ -1962,7 +2220,9 @@ $("#trainingScreen").addEventListener("click", (event) => {
   }
 
   if (event.target.closest("#finishWorkout")) {
-    const log = currentLog();
+    const template = currentTemplate();
+    if (!template) return;
+    const log = currentLog(template.id);
     if (isLogComplete(log)) {
       finishLog(log, null);
       render();
@@ -1971,9 +2231,10 @@ $("#trainingScreen").addEventListener("click", (event) => {
     }
   }
 
-  if (event.target.closest("#newSession")) {
-    currentLog().archived = true;
+  if (event.target.closest("#closeSummary")) {
+    activeSummaryLogId = null;
     saveState();
+    showView("home");
     render();
   }
 });
@@ -1981,9 +2242,26 @@ $("#trainingScreen").addEventListener("click", (event) => {
 $("#exitDialog").addEventListener("click", (event) => {
   const button = event.target.closest("[data-exit-reason]");
   if (!button) return;
-  finishLog(currentLog(), button.dataset.exitReason === "terminee" ? null : button.dataset.exitReason);
+  const template = currentTemplate();
+  if (!template) return;
+  finishLog(currentLog(template.id), button.dataset.exitReason === "terminee" ? null : button.dataset.exitReason);
   $("#exitDialog").close();
   render();
+});
+
+$("#startExerciseButton").addEventListener("click", () => {
+  const template = currentTemplate();
+  if (!template) return;
+  const log = currentLog(template.id);
+  log.introSeenIndex = log.currentExerciseIndex;
+  exerciseIntroOpen = false;
+  $("#exerciseIntroDialog").close();
+  saveState();
+  renderTraining();
+});
+
+$("#exerciseIntroDialog").addEventListener("close", () => {
+  exerciseIntroOpen = false;
 });
 
 $("#alternativeList").addEventListener("click", (event) => {
@@ -1995,8 +2273,9 @@ $("#alternativeList").addEventListener("click", (event) => {
 
 $("#confirmAlternative").addEventListener("click", () => {
   if (!activeExercisePlanId || !selectedAlternativeName) return;
-  const log = currentLog();
-  const template = templateById(log.templateId);
+  const template = currentTemplate();
+  if (!template) return;
+  const log = currentLog(template.id);
   const item = template.items.find((candidate) => candidate.id === activeExercisePlanId);
   const entry = entryFor(log, item);
   entry.performedExerciseName = selectedAlternativeName;
@@ -2011,7 +2290,9 @@ $("#confirmAlternative").addEventListener("click", () => {
 
 $("#templateForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  state.templates.push({ id: id(), profileId: state.activeProfileId, name: $("#templateName").value.trim().toUpperCase(), items: [] });
+  const templateId = id();
+  state.templates.push({ id: templateId, profileId: state.activeProfileId, name: $("#templateName").value.trim().toUpperCase(), items: [] });
+  expandedTemplateIds.add(templateId);
   event.target.reset();
   saveState();
   render();
@@ -2111,8 +2392,8 @@ $("#settingsForm").addEventListener("submit", (event) => {
   state.settings = {
     theme: $("#settingsTheme").value,
     mode: $("#settingsMode").value,
-    weightUnit: $("#settingsWeightUnit").value,
-    lengthUnit: $("#settingsLengthUnit").value,
+    weightUnit: "kg",
+    lengthUnit: "cm",
     soundMuted: !!state.settings.soundMuted,
   };
   saveState();
@@ -2123,6 +2404,7 @@ $("#settingsForm").addEventListener("submit", (event) => {
 function openOnboardingAfterWelcome() {
   if (state.onboardingComplete) return;
   const dialog = $("#onboardingDialog");
+  renderOnboardingPreview();
   if (dialog && dialog.showModal) dialog.showModal();
 }
 
@@ -2168,6 +2450,7 @@ if ($("#plusOpenSettings")) {
 }
 
 $("#openNutrition").addEventListener("click", () => {
+  if (!nutritionEnabled) return;
   showView("nutrition");
   renderNutritionPanel();
   if (!state.nutritionIntroSeen) $("#nutritionIntroDialog").showModal();
@@ -2217,6 +2500,22 @@ function selectedOnboardingDays() {
   return [...document.querySelectorAll("[name='onboardingDays']:checked")].map((item) => Number(item.value));
 }
 
+function renderOnboardingPreview() {
+  const panel = $("#onboardingPreview");
+  if (!panel) return;
+  const goal = $("#onboardingGoal").value;
+  const frequency = Number($("#onboardingFrequency").value || 3);
+  const preset = goalPreset(goal);
+  const defs = onboardingProgramDefinitions(frequency);
+  panel.innerHTML = defs.map((definition) => `
+    <article>
+      <strong>${escapeHtml(definition.name)}</strong>
+      <span>${preset.sets} series - ${preset.minReps}/${preset.maxReps} reps - repos ${restLabel(preset.rest)}</span>
+      <p>${definition.exercises.slice(0, 4).map(escapeHtml).join(" / ")}${definition.exercises.length > 4 ? " +" : ""}</p>
+    </article>
+  `).join("");
+}
+
 function completeOnboarding(generateProgram) {
   const profile = activeProfile();
   profile.name = $("#onboardingName").value.trim() || profile.name || "Profil principal";
@@ -2248,6 +2547,10 @@ function completeOnboarding(generateProgram) {
 $("#onboardingForm").addEventListener("submit", (event) => {
   event.preventDefault();
   completeOnboarding(true);
+});
+
+$("#onboardingForm").addEventListener("change", (event) => {
+  if (event.target.closest("#onboardingGoal") || event.target.closest("#onboardingFrequency")) renderOnboardingPreview();
 });
 
 $("#skipOnboarding").addEventListener("click", () => {
@@ -2302,6 +2605,16 @@ $("#templateList").addEventListener("submit", (event) => {
 });
 
 $("#templateList").addEventListener("click", (event) => {
+  const toggle = event.target.closest("[data-toggle-template]");
+  if (toggle) {
+    if (expandedTemplateIds.has(toggle.dataset.toggleTemplate)) {
+      expandedTemplateIds.delete(toggle.dataset.toggleTemplate);
+    } else {
+      expandedTemplateIds.add(toggle.dataset.toggleTemplate);
+    }
+    renderBuilder();
+    return;
+  }
   const editTemplateButton = event.target.closest("[data-edit-template]");
   if (editTemplateButton) {
     const template = templateById(editTemplateButton.dataset.editTemplate);
@@ -2309,6 +2622,27 @@ $("#templateList").addEventListener("click", (event) => {
     $("#editTemplateId").value = template.id;
     $("#editTemplateName").value = template.name;
     $("#editTemplateDialog").showModal();
+    return;
+  }
+  const duplicateTemplateButton = event.target.closest("[data-duplicate-template]");
+  if (duplicateTemplateButton) {
+    duplicateTemplate(duplicateTemplateButton.dataset.duplicateTemplate);
+    saveState();
+    render();
+    return;
+  }
+  const moveItem = event.target.closest("[data-move-item]");
+  if (moveItem) {
+    const [templateId, itemId, direction] = moveItem.dataset.moveItem.split(":");
+    const template = templateById(templateId);
+    if (!template) return;
+    const index = template.items.findIndex((item) => item.id === itemId);
+    const nextIndex = index + Number(direction);
+    if (index < 0 || nextIndex < 0 || nextIndex >= template.items.length) return;
+    const [item] = template.items.splice(index, 1);
+    template.items.splice(nextIndex, 0, item);
+    saveState();
+    renderBuilder();
     return;
   }
   const editItem = event.target.closest("[data-edit-item]");
@@ -2630,10 +2964,12 @@ function maybeOpenOnboarding() {
   if (state.onboardingComplete) return;
   const dialog = $("#onboardingDialog");
   if (!dialog || !dialog.showModal) return;
+  renderOnboardingPreview();
   dialog.showModal();
 }
 
 updateVersionLabels();
 registerServiceWorker();
+history.replaceState({ view: "home" }, "", window.location.pathname + window.location.search);
 render();
 maybeOpenOnboarding();

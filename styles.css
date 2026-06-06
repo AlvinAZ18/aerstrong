@@ -1189,6 +1189,62 @@ select:focus {
   margin: 12px 0;
 }
 
+.template-toggle {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0;
+  color: var(--ink);
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.template-title {
+  display: grid;
+  gap: 2px;
+}
+
+.template-toggle strong {
+  font-size: 1.05rem;
+}
+
+.template-toggle small {
+  color: var(--red-2);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.chevron {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: white;
+  background: var(--red);
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 950;
+  transition: transform 180ms ease;
+}
+
+.template-toggle.active .chevron {
+  transform: rotate(180deg);
+}
+
+.template-body {
+  display: none;
+}
+
+.template-body.active {
+  display: grid;
+  gap: 10px;
+}
+
 .exercise-group {
   display: grid;
   gap: 8px;
@@ -1239,6 +1295,21 @@ select:focus {
   color: white;
 }
 
+.schedule-faite {
+  color: white;
+  background: #16a34a;
+}
+
+.schedule-en-cours {
+  color: white;
+  background: var(--red);
+}
+
+.schedule-prevue {
+  color: var(--ink);
+  background: rgba(var(--accent-rgb), 0.14);
+}
+
 .active-choice {
   border-color: var(--red);
   color: white;
@@ -1259,6 +1330,100 @@ select:focus {
   background: rgba(var(--accent-rgb), 0.08);
   border: 1px solid rgba(var(--accent-rgb), 0.28);
   border-radius: 14px;
+}
+
+.backup-reminder {
+  padding: 10px;
+  color: var(--muted);
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+  border-radius: 12px;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.bar-chart,
+.performance-list {
+  display: grid;
+  gap: 10px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 1fr) minmax(90px, 2fr) auto;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.bar-row div {
+  height: 12px;
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.bar-row i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--red), var(--accent-soft));
+  border-radius: inherit;
+}
+
+.bar-row strong {
+  color: var(--ink);
+}
+
+.performance-list div {
+  display: grid;
+  gap: 3px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.performance-list span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.onboarding-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.onboarding-preview article {
+  padding: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.onboarding-preview span,
+.onboarding-preview p {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.disabled-setting {
+  opacity: 0.52;
+}
+
+.disabled-setting span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.disabled-setting select {
+  cursor: not-allowed;
+}
+
+.exercise-intro-card h2 {
+  font-size: clamp(1.8rem, 8vw, 2.6rem);
+  line-height: 0.95;
 }
 
 .wide-dialog {

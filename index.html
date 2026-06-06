@@ -20,7 +20,7 @@
           <h1>Training System</h1>
           <p class="active-profile-chip" id="activeProfileName">Profil principal</p>
         </div>
-        <span class="version-badge" id="appVersionBadge">v1.2.0</span>
+        <span class="version-badge" id="appVersionBadge">v1.3.0</span>
         <button class="settings-button" id="openSettings" type="button" title="Options" aria-label="Options">⚙</button>
         <button class="icon-button" id="installButton" type="button" hidden title="Installer">Install</button>
       </header>
@@ -47,7 +47,7 @@
             </button>
             <button class="main-menu-button future" data-view="future" type="button">
               <span>Plus</span>
-              <strong>Nutrition, recovery et futures options</strong>
+              <strong>Recovery et futures options</strong>
             </button>
           </div>
         </section>
@@ -82,7 +82,10 @@
               <button class="primary-button align-end" type="submit">Creer</button>
             </form>
             <section>
-              <h3>Seances</h3>
+              <div class="item-head">
+                <h3>Seances</h3>
+                <button class="small-button" id="createPplTemplates" type="button">Modeles PPL</button>
+              </div>
               <div class="stack" id="templateList"></div>
             </section>
           </div>
@@ -99,10 +102,6 @@
                 <label>
                   Groupe musculaire
                   <select id="exerciseFamily"></select>
-                </label>
-                <label class="wide" id="customFamilyWrap" hidden>
-                  Nouveau groupe
-                  <input id="exerciseFamilyCustom" placeholder="Avant-bras, cardio, mobilité...">
                 </label>
                 <label>
                   Type
@@ -204,9 +203,9 @@
           <div class="plus-grid">
             <article class="plus-card nutrition">
               <span>Nutrition</span>
-              <strong>Repas, calories et macros</strong>
-              <p>Suivre l'adherence alimentaire, les objectifs et les habitudes autour de l'entrainement.</p>
-              <button class="small-button" id="openNutrition" type="button">Ouvrir</button>
+              <strong>Module a venir</strong>
+              <p>En reconstruction pour rester simple, clair et vraiment utile.</p>
+              <button class="small-button" id="openNutrition" type="button" disabled>Prochainement</button>
             </article>
             <article class="plus-card recovery">
               <span>Recovery</span>
@@ -391,6 +390,11 @@
           </div>
         </section>
 
+        <section class="onboarding-section">
+          <h3>Apercu du programme</h3>
+          <div class="onboarding-preview" id="onboardingPreview"></div>
+        </section>
+
         <button class="primary-button" type="submit">Generer mon programme</button>
         <button class="small-button" id="skipOnboarding" type="button">Ignorer et commencer de zero</button>
       </form>
@@ -508,18 +512,25 @@
             <option value="light">Clair</option>
           </select>
         </label>
-        <label>
-          Poids
-          <select id="settingsWeightUnit">
+        <label class="disabled-setting">
+          Poids <span>prochainement</span>
+          <select id="settingsWeightUnit" disabled>
             <option value="kg">kg</option>
             <option value="lbs">lbs</option>
           </select>
         </label>
-        <label>
-          Mesures
-          <select id="settingsLengthUnit">
+        <label class="disabled-setting">
+          Mesures <span>prochainement</span>
+          <select id="settingsLengthUnit" disabled>
             <option value="cm">cm</option>
             <option value="inch">inch</option>
+          </select>
+        </label>
+        <label class="disabled-setting">
+          Langue <span>prochainement</span>
+          <select id="settingsLanguage" disabled>
+            <option value="fr">Francais</option>
+            <option value="en">English</option>
           </select>
         </label>
         <section class="settings-data-panel">
@@ -542,6 +553,7 @@
             </label>
           </div>
           <button class="small-button" id="openAbout" type="button">À propos d'AERSTRONG</button>
+          <p class="backup-reminder">Sauvegarde conseillee apres plusieurs seances : les donnees restent sur cet appareil.</p>
           <p class="muted-text" id="dataStatus">Les donnees restent sur ce telephone. Garde un export en securite.</p>
         </section>
         <button class="primary-button" type="submit">Sauver</button>
@@ -558,6 +570,15 @@
         <button class="small-button" data-exit-reason="autre" type="button">Autre raison</button>
         <button class="primary-button" data-exit-reason="terminee" type="button">Finir quand meme</button>
         <button class="small-button" value="cancel">Continuer la seance</button>
+      </form>
+    </dialog>
+
+    <dialog id="exerciseIntroDialog">
+      <form method="dialog" class="dialog-card exercise-intro-card">
+        <p class="label" id="exerciseIntroStep">Exercice</p>
+        <h2 id="exerciseIntroName">Exercice</h2>
+        <p class="muted-text" id="exerciseIntroMeta"></p>
+        <button class="primary-button" id="startExerciseButton" type="button">Commencer</button>
       </form>
     </dialog>
 
