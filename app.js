@@ -1,5 +1,5 @@
 const storageKey = "forgefit-v4";
-const appVersion = "V20";
+const appVersion = "v1.2.0";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -21,6 +21,10 @@ let togetherMode = false;
 let togetherProfileIds = [state.activeProfileId];
 let audioContext = null;
 let aboutFromWelcome = false;
+let editingExerciseId = null;
+let exerciseOptionsId = null;
+let pendingDeleteExerciseId = null;
+let activeExerciseAlternatives = [];
 
 const sessionUi = {
   phase: "ready",
@@ -59,7 +63,7 @@ function escapeHtml(value) {
   })[char]);
 }
 
-function planItem(exerciseId, sets, minReps, maxReps, weight, increment) {
+function planItem(exerciseId, sets, minReps, maxReps, weight, increment, rest) {
   return {
     id: id(),
     exerciseId,
@@ -68,8 +72,13 @@ function planItem(exerciseId, sets, minReps, maxReps, weight, increment) {
     maxReps,
     weight,
     increment,
+    rest,
     targetReps: Array(sets).fill(minReps),
   };
+}
+
+function defaultMuscleGroups() {
+  return ["Dos", "Pectoraux", "Jambes", "Epaules", "Biceps", "Triceps", "Abdos", "Trapezes", "Autre"];
 }
 
 function starterState() {
@@ -128,6 +137,7 @@ function starterState() {
     health: [],
     nutrition: [],
     nutritionSettings: [],
+    muscleGroups: defaultMuscleGroups(),
     settings: { theme: "gold", mode: "dark", weightUnit: "kg", lengthUnit: "cm", soundMuted: false },
     substitutions: {},
     dataVersion: dataSchemaVersion,
@@ -173,6 +183,7 @@ function normalizeState(saved) {
     health: (saved.health || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     nutrition: (saved.nutrition || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     nutritionSettings: (saved.nutritionSettings || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
+    muscleGroups: normalizeMuscleGroups(saved.muscleGroups, mergedExercises),
     settings: migratedSettings(saved),
     substitutions: saved.substitutions || {},
     dataVersion: dataSchemaVersion,
@@ -180,6 +191,11 @@ function normalizeState(saved) {
     onboardingComplete: saved.onboardingComplete === undefined ? true : saved.onboardingComplete,
     [brandMigrationKey]: saved[brandMigrationKey] || (saved.settings && saved.settings.theme === "red"),
   };
+}
+
+function normalizeMuscleGroups(savedGroups, exercises) {
+  const groups = [...defaultMuscleGroups(), ...(savedGroups || []), ...(exercises || []).map((item) => item.family).filter(Boolean)];
+  return [...new Set(groups.map((item) => item === "Ischios" ? "Jambes" : item).filter(Boolean))];
 }
 
 function migratedSettings(saved) {
@@ -477,6 +493,11 @@ function currentTemplate() {
   return planned ? templateById(planned.templateId) : profileTemplates()[0];
 }
 
+function todayTemplate() {
+  const planned = scheduledFor(todayKey)[0];
+  return planned ? templateById(planned.templateId) : null;
+}
+
 function currentTemplateForProfile(profileId) {
   const previousProfileId = state.activeProfileId;
   state.activeProfileId = profileId;
@@ -590,8 +611,57 @@ function ageFromBirthDate(value) {
   return age;
 }
 
+function birthDateToDisplay(value) {
+  if (!value) return "";
+  const [year, month, day] = String(value).split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
+}
+
+function displayToBirthDate(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const match = text.match(/^(\d{1,2})[\/\-. ](\d{1,2})[\/\-. ](\d{4})$/);
+  if (!match) return "";
+  const [, day, month, year] = match;
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
 function restLabel(seconds) {
   return formatTime(Number(seconds || 0));
+}
+
+function setRestPicker(prefix, seconds) {
+  const minuteSelect = $(`#${prefix}Minutes`);
+  const secondSelect = $(`#${prefix}Seconds`);
+  if (!minuteSelect || !secondSelect) return;
+  const normalized = Number(seconds || 120);
+  minuteSelect.value = String(Math.floor(normalized / 60));
+  secondSelect.value = String(Math.floor(normalized % 60 / 10) * 10);
+}
+
+function restFromPicker(prefix) {
+  const minutes = Number($(`#${prefix}Minutes`) && $(`#${prefix}Minutes`).value || 0);
+  const seconds = Number($(`#${prefix}Seconds`) && $(`#${prefix}Seconds`).value || 0);
+  return Math.max(10, minutes * 60 + seconds);
+}
+
+function pickerOptions(max, step, selected) {
+  const values = [];
+  for (let value = 0; value <= max; value += step) values.push(value);
+  return values.map((value) => `<option value="${value}" ${Number(selected) === value ? "selected" : ""}>${String(value).padStart(2, "0")}</option>`).join("");
+}
+
+function fillRestPickers() {
+  ["exerciseRest", "editPlanRest", "addExerciseRest"].forEach((prefix) => {
+    const minuteSelect = $(`#${prefix}Minutes`);
+    const secondSelect = $(`#${prefix}Seconds`);
+    if (!minuteSelect || !secondSelect || minuteSelect.dataset.ready) return;
+    minuteSelect.innerHTML = pickerOptions(10, 1, 2);
+    secondSelect.innerHTML = pickerOptions(50, 10, 0);
+    minuteSelect.dataset.ready = "true";
+  });
 }
 
 function parseRestInput(value) {
@@ -622,11 +692,119 @@ function logStats(log) {
   };
 }
 
+function allMuscleGroups() {
+  return normalizeMuscleGroups(state.muscleGroups, state.exercises);
+}
+
+function groupedExercises(exercises) {
+  return allMuscleGroups()
+    .filter((group) => group !== "Autre")
+    .map((group) => ({ group, items: exercises.filter((exerciseItem) => exerciseItem.family === group) }))
+    .filter((section) => section.items.length);
+}
+
+function exerciseSelectOptions(selectedId = "") {
+  return groupedExercises(state.exercises).map((section) => `
+    <optgroup label="${escapeHtml(section.group)}">
+      ${section.items.map((exerciseItem) => `<option value="${exerciseItem.id}" ${exerciseItem.id === selectedId ? "selected" : ""}>${escapeHtml(exerciseItem.name)}</option>`).join("")}
+    </optgroup>
+  `).join("");
+}
+
+function templateSelectOptions(selectedId = "") {
+  return profileTemplates().map((template) => `<option value="${template.id}" ${template.id === selectedId ? "selected" : ""}>${escapeHtml(template.name)}</option>`).join("");
+}
+
+function resetExerciseForm() {
+  editingExerciseId = null;
+  activeExerciseAlternatives = [];
+  $("#exerciseEditId").value = "";
+  $("#exerciseForm").reset();
+  $("#exerciseSubmitButton").textContent = "Ajouter l'exercice";
+  $("#cancelExerciseEdit").hidden = true;
+  setRestPicker("exerciseRest", 120);
+  renderExerciseFormHelpers();
+}
+
+function selectedExerciseFamily() {
+  const value = $("#exerciseFamily").value;
+  return value || "Autre";
+}
+
+function renderExerciseFormHelpers() {
+  const previousFamily = $("#exerciseFamily").value || "Dos";
+  const previousAlternativePick = $("#exerciseAlternativePick").value;
+  const groups = allMuscleGroups();
+  $("#exerciseFamily").innerHTML = groups.map((group) => `<option value="${escapeHtml(group)}">${escapeHtml(group)}</option>`).join("");
+  $("#exerciseFamily").value = groups.includes(previousFamily) ? previousFamily : "Dos";
+  $("#customFamilyWrap").hidden = true;
+  const currentId = $("#exerciseEditId").value;
+  const alternatives = state.exercises.filter((exerciseItem) => exerciseItem.id !== currentId && !activeExerciseAlternatives.includes(exerciseItem.name));
+  $("#exerciseAlternativePick").innerHTML = `<option value="">Ajouter une alternative...</option>${groupedExercises(alternatives).map((section) => `
+    <optgroup label="${escapeHtml(section.group)}">
+      ${section.items.map((exerciseItem) => `<option value="${escapeHtml(exerciseItem.name)}">${escapeHtml(exerciseItem.name)}</option>`).join("")}
+    </optgroup>
+  `).join("")}`;
+  $("#exerciseAlternativePick").value = previousAlternativePick || "";
+  $("#exerciseAlternativeTags").innerHTML = activeExerciseAlternatives.map((name) => `
+    <button class="tag-chip" data-remove-exercise-alternative="${escapeHtml(name)}" type="button">
+      <span>${escapeHtml(name)}</span><strong>x</strong>
+    </button>
+  `).join("") || `<p class="muted-text">Aucune alternative ajoutee.</p>`;
+  $("#muscleGroupManager").innerHTML = allMuscleGroups().map((group) => {
+    const locked = defaultMuscleGroups().includes(group);
+    return `<span class="manager-chip">${escapeHtml(group)}${locked ? "" : `<button data-rename-muscle="${escapeHtml(group)}" type="button">Renommer</button><button data-delete-muscle="${escapeHtml(group)}" type="button">Suppr.</button>`}</span>`;
+  }).join("");
+}
+
+function editExercise(exerciseItem) {
+  editingExerciseId = exerciseItem.id;
+  activeExerciseAlternatives = [...(exerciseItem.alternatives || [])];
+  $("#exerciseEditId").value = exerciseItem.id;
+  $("#exerciseName").value = exerciseItem.name;
+  $("#exerciseEquipment").value = exerciseItem.equipment;
+  renderExerciseFormHelpers();
+  $("#exerciseFamily").value = allMuscleGroups().includes(exerciseItem.family) ? exerciseItem.family : "Autre";
+  $("#customFamilyWrap").hidden = true;
+  setRestPicker("exerciseRest", exerciseItem.rest);
+  $("#exerciseSubmitButton").textContent = "Modifier l'exercice";
+  $("#cancelExerciseEdit").hidden = false;
+  builderMode = "library";
+  renderBuilderPanes();
+  $("#exerciseForm").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function applyExerciseRename(oldName, newName) {
+  state.logs.forEach((log) => {
+    (log.entries || []).forEach((entry) => {
+      if (entry.performedExerciseName === oldName) entry.performedExerciseName = newName;
+    });
+  });
+  state.exercises.forEach((exerciseItem) => {
+    exerciseItem.alternatives = (exerciseItem.alternatives || []).map((name) => name === oldName ? newName : name);
+  });
+}
+
+function removeExerciseEverywhere(exerciseId) {
+  const exerciseItem = exerciseById(exerciseId);
+  if (!exerciseItem) return;
+  state.templates.forEach((template) => {
+    template.items = (template.items || []).filter((item) => item.exerciseId !== exerciseId);
+  });
+  state.logs.forEach((log) => {
+    log.entries = (log.entries || []).filter((entry) => entry.exerciseId !== exerciseId && entry.performedExerciseName !== exerciseItem.name);
+  });
+  state.exercises = state.exercises
+    .filter((item) => item.id !== exerciseId)
+    .map((item) => ({ ...item, alternatives: (item.alternatives || []).filter((name) => name !== exerciseItem.name) }));
+  delete state.substitutions[exerciseId];
+}
+
 function estimatedTemplateMinutes(template) {
   if (!template || !template.items || !template.items.length) return 0;
   const seconds = template.items.reduce((total, item) => {
     const exercise = exerciseById(item.exerciseId);
-    const rest = Number((exercise && exercise.rest) || 90);
+    const rest = Number(item.rest || (exercise && exercise.rest) || 90);
     const sets = Number(item.sets || 0);
     return total + (sets * 55) + (Math.max(0, sets - 1) * rest) + 75;
   }, 0);
@@ -652,14 +830,14 @@ function daysSince(dateValue) {
 function renderTodayDashboard() {
   const panel = $("#todayDashboard");
   if (!panel) return;
-  const template = currentTemplate();
+  const template = todayTemplate();
   if (!template) {
     panel.innerHTML = `
       <article class="today-card empty-plan">
         <div>
           <p class="label">Aujourd'hui</p>
           <h2>Aucune seance prevue</h2>
-          <p>Creer une seance dans Builder pour demarrer proprement.</p>
+          <p>Planifie une seance dans Builder pour l'afficher ici le bon jour.</p>
         </div>
         <button class="primary-button" data-view="builder" type="button">Creer une seance</button>
       </article>
@@ -915,6 +1093,7 @@ function renderCoachPanel() {
 
 function render() {
   applySettings();
+  fillRestPickers();
   renderTodayDashboard();
   renderBuilderPanes();
   renderTraining();
@@ -1200,21 +1379,31 @@ function renderBuilder() {
     <article class="item-card builder-card">
       <div class="item-head">
         <strong>${escapeHtml(template.name)}</strong>
-        <span class="status-pill">${template.items.length} exos</span>
+        <div class="button-row tight-row">
+          <span class="status-pill">${template.items.length} exos</span>
+          <button class="small-button" data-edit-template="${template.id}" type="button">Modifier</button>
+        </div>
       </div>
       <form class="mini-grid" data-add-item="${template.id}">
-        <label class="exercise-pick">Exercice<select name="exerciseId">${state.exercises.map((exercise) => `<option value="${exercise.id}">${escapeHtml(exercise.name)}</option>`).join("")}</select></label>
+        <label class="exercise-pick">Exercice<select name="exerciseId">${exerciseSelectOptions()}</select></label>
         <label>Series<input name="sets" inputmode="numeric" min="1" type="number" value="4"></label>
         <label>Rep min<input name="minReps" inputmode="numeric" min="1" type="number" value="8"></label>
         <label>Rep max<input name="maxReps" inputmode="numeric" min="1" type="number" value="12"></label>
         <label>Kg<input name="weight" inputmode="decimal" min="0" step="0.5" type="number" value="40"></label>
         <label>+ kg<input name="increment" inputmode="decimal" min="0" step="0.5" type="number" value="2.5"></label>
+        <label class="rest-pair">Repos
+          <div class="time-picker">
+            <select name="restMinutes" aria-label="Minutes">${pickerOptions(10, 1, 2)}</select>
+            <span class="time-separator">:</span>
+            <select name="restSeconds" aria-label="Secondes">${pickerOptions(50, 10, 0)}</select>
+          </div>
+        </label>
         <button class="small-button" type="submit">Ajouter</button>
       </form>
       <div class="template-items">
         ${template.items.map((item) => {
           const exercise = exerciseById(item.exerciseId);
-          return `<div class="set-row"><span>${escapeHtml(exercise && exercise.name)} - ${item.sets} series - ${item.minReps}/${item.maxReps} reps - ${item.weight} kg</span><button class="small-button danger" data-remove-item="${template.id}:${item.id}" type="button">Suppr.</button></div>`;
+          return `<div class="set-row"><span>${escapeHtml(exercise && exercise.name)} - ${item.sets} series - ${item.minReps}/${item.maxReps} reps - ${item.weight} kg - repos ${restLabel(item.rest || (exercise && exercise.rest) || 0)}</span><div class="button-row tight-row"><button class="small-button" data-edit-item="${template.id}:${item.id}" type="button">Modifier</button><button class="small-button danger" data-remove-item="${template.id}:${item.id}" type="button">Suppr.</button></div></div>`;
         }).join("")}
       </div>
     </article>
@@ -1225,21 +1414,30 @@ function renderBuilder() {
     const muscleMatch = muscleFilter === "Tous" || item.family === muscleFilter;
     return equipmentMatch && muscleMatch;
   });
-  $("#exerciseLibrary").innerHTML = exercises.map((exercise) => `
-    <article class="item-card exercise-card">
-      <div>
-        <strong>${escapeHtml(exercise.name)}</strong>
-        <p>${escapeHtml(exercise.family)} - ${escapeHtml(exercise.equipment)} - repos ${restLabel(exercise.rest)}</p>
-      </div>
-      <p class="hint">Alternatives : ${exercise.alternatives.map(escapeHtml).join(", ") || "aucune"}</p>
-    </article>
-  `).join("");
+  $("#exerciseLibrary").innerHTML = groupedExercises(exercises).map((section) => `
+    <section class="exercise-group">
+      <h4>${escapeHtml(section.group)}</h4>
+      ${section.items.map((exerciseItem) => `
+        <article class="item-card exercise-card">
+          <div class="item-head">
+            <div>
+              <strong>${escapeHtml(exerciseItem.name)}</strong>
+              <p>${escapeHtml(exerciseItem.equipment)} - repos ${restLabel(exerciseItem.rest)}</p>
+            </div>
+            <button class="icon-mini" data-exercise-options="${exerciseItem.id}" type="button" aria-label="Options ${escapeHtml(exerciseItem.name)}">...</button>
+          </div>
+          <p class="hint">Alternatives : ${(exerciseItem.alternatives || []).map(escapeHtml).join(", ") || "aucune"}</p>
+        </article>
+      `).join("")}
+    </section>
+  `).join("") || `<p class="empty">Aucun exercice pour ces filtres.</p>`;
+  renderExerciseFormHelpers();
 }
 
 function renderEquipmentFilters() {
   const types = ["Tous", ...new Set(state.exercises.map((item) => item.equipment))];
   $("#equipmentFilters").innerHTML = types.map((type) => `<button class="filter-chip ${type === equipmentFilter ? "active" : ""}" data-equipment="${escapeHtml(type)}" type="button">${escapeHtml(type)}</button>`).join("");
-  const muscles = ["Tous", ...new Set(state.exercises.map((item) => item.family).filter(Boolean))];
+  const muscles = ["Tous", ...allMuscleGroups().filter((item) => item !== "Autre")];
   $("#muscleFilters").innerHTML = muscles.map((muscle) => `<button class="filter-chip ${muscle === muscleFilter ? "active" : ""}" data-muscle="${escapeHtml(muscle)}" type="button">${escapeHtml(muscle)}</button>`).join("");
   $("#settingsTheme").value = state.settings.theme;
   $("#settingsMode").value = state.settings.mode || "dark";
@@ -1292,6 +1490,7 @@ function renderTracking() {
   if (trackingMode === "health") {
     const profile = activeProfile();
     const profileAge = ageFromBirthDate(profile.birthDate);
+    const lastHealth = profileHealth()[0] || {};
     $("#trackingPanel").innerHTML = `
       ${profileManagerHtml()}
 
@@ -1304,7 +1503,12 @@ function renderTracking() {
         </div>
         <form class="input-grid compact-form" id="profileForm">
           <label>Nom<input id="profileName" value="${escapeHtml(profile.name || "")}" placeholder="Profil principal"></label>
-          <label>Date de naissance<input id="profileBirthDate" type="date" value="${escapeHtml(profile.birthDate || "")}"></label>
+          <label class="wide">Date de naissance
+            <div class="birth-date-row">
+              <input id="profileBirthDateText" inputmode="numeric" value="${escapeHtml(birthDateToDisplay(profile.birthDate))}" placeholder="jj/mm/aaaa">
+              <input id="profileBirthDatePicker" type="date" value="${escapeHtml(profile.birthDate || "")}" aria-label="Choisir dans le calendrier">
+            </div>
+          </label>
           <label>Taille cm<input id="profileHeight" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(profile.height || "")}" placeholder="178"></label>
           <button class="primary-button align-end" type="submit">Sauver profil</button>
         </form>
@@ -1312,19 +1516,19 @@ function renderTracking() {
 
       <form class="input-grid compact-form" id="healthForm">
         <input id="healthEditId" type="hidden">
-        <label>Poids kg<input id="healthWeight" inputmode="decimal" type="number" step="0.1" placeholder="82.5"></label>
-        <label>Bodyfat %<input id="healthBodyfat" inputmode="decimal" type="number" step="0.1" placeholder="15"></label>
-        <label>Tour taille cm<input id="healthWaist" inputmode="decimal" type="number" step="0.1" placeholder="84"></label>
-        <label>Poitrine cm<input id="healthChest" inputmode="decimal" type="number" step="0.1" placeholder="105"></label>
-        <label>Carre epaules cm<input id="healthShoulders" inputmode="decimal" type="number" step="0.1" placeholder="118"></label>
-        <label>Biceps D contracte<input id="healthBicepsRight" inputmode="decimal" type="number" step="0.1" placeholder="38"></label>
-        <label>Biceps G contracte<input id="healthBicepsLeft" inputmode="decimal" type="number" step="0.1" placeholder="37.5"></label>
-        <label>Avant-bras D<input id="healthForearmRight" inputmode="decimal" type="number" step="0.1" placeholder="30"></label>
-        <label>Avant-bras G<input id="healthForearmLeft" inputmode="decimal" type="number" step="0.1" placeholder="29.5"></label>
-        <label>Cuisse D<input id="healthThighRight" inputmode="decimal" type="number" step="0.1" placeholder="61"></label>
-        <label>Cuisse G<input id="healthThighLeft" inputmode="decimal" type="number" step="0.1" placeholder="60.5"></label>
-        <label>Mollet D<input id="healthCalfRight" inputmode="decimal" type="number" step="0.1" placeholder="39"></label>
-        <label>Mollet G<input id="healthCalfLeft" inputmode="decimal" type="number" step="0.1" placeholder="38.5"></label>
+        <label>Poids kg<input id="healthWeight" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.weight || "")}" placeholder="82.5"></label>
+        <label>Bodyfat %<input id="healthBodyfat" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.bodyfat || "")}" placeholder="15"></label>
+        <label>Tour taille cm<input id="healthWaist" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.waist || "")}" placeholder="84"></label>
+        <label>Poitrine cm<input id="healthChest" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.chest || "")}" placeholder="105"></label>
+        <label>Carre epaules cm<input id="healthShoulders" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.shoulders || "")}" placeholder="118"></label>
+        <label>Biceps D contracte<input id="healthBicepsRight" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.bicepsRight || "")}" placeholder="38"></label>
+        <label>Biceps G contracte<input id="healthBicepsLeft" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.bicepsLeft || "")}" placeholder="37.5"></label>
+        <label>Avant-bras D<input id="healthForearmRight" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.forearmRight || "")}" placeholder="30"></label>
+        <label>Avant-bras G<input id="healthForearmLeft" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.forearmLeft || "")}" placeholder="29.5"></label>
+        <label>Cuisse D<input id="healthThighRight" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.thighRight || "")}" placeholder="61"></label>
+        <label>Cuisse G<input id="healthThighLeft" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.thighLeft || "")}" placeholder="60.5"></label>
+        <label>Mollet D<input id="healthCalfRight" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.calfRight || "")}" placeholder="39"></label>
+        <label>Mollet G<input id="healthCalfLeft" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.calfLeft || "")}" placeholder="38.5"></label>
         <button class="primary-button align-end" type="submit">Enregistrer</button>
       </form>
       <div class="stack">${profileHealth().map((item) => renderHealthEntry(item)).join("") || `<p class="empty">Aucune donnee health.</p>`}</div>
@@ -1455,7 +1659,7 @@ function completeCurrentSet() {
 
   if (log.currentSetIndex < item.sets - 1) {
     log.currentSetIndex += 1;
-    startRest((exerciseById(item.exerciseId) && exerciseById(item.exerciseId).rest) || 120);
+    startRest(item.rest || (exerciseById(item.exerciseId) && exerciseById(item.exerciseId).rest) || 120);
   } else {
     log.currentExerciseIndex += 1;
     log.currentSetIndex = 0;
@@ -1480,7 +1684,7 @@ function completeTogetherSet(profileId) {
 
   if (log.currentSetIndex < item.sets - 1) {
     log.currentSetIndex += 1;
-    startTogetherRest(profileId, (exerciseById(item.exerciseId) && exerciseById(item.exerciseId).rest) || 120);
+    startTogetherRest(profileId, item.rest || (exerciseById(item.exerciseId) && exerciseById(item.exerciseId).rest) || 120);
   } else {
     log.currentExerciseIndex += 1;
     log.currentSetIndex = 0;
@@ -1815,11 +2019,91 @@ $("#templateForm").addEventListener("submit", (event) => {
 
 $("#exerciseForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  state.exercises.push(exercise(id(), $("#exerciseName").value.trim(), $("#exerciseFamily").value.trim(), $("#exerciseEquipment").value, parseRestInput($("#exerciseRest").value), $("#exerciseAlternatives").value.split(",").map((item) => item.trim()).filter(Boolean)));
-  event.target.reset();
-  $("#exerciseRest").value = "2:00";
+  const name = $("#exerciseName").value.trim();
+  const family = selectedExerciseFamily();
+  if (family && !state.muscleGroups.includes(family)) state.muscleGroups.push(family);
+  const payload = {
+    name,
+    family,
+    equipment: $("#exerciseEquipment").value,
+    rest: restFromPicker("exerciseRest"),
+    alternatives: [...activeExerciseAlternatives],
+  };
+  if (editingExerciseId) {
+    const current = exerciseById(editingExerciseId);
+    if (!current) return;
+    if (!confirm(`Modifier "${current.name}" ? Les seances qui utilisent cet exercice seront conservees avec ces nouvelles informations.`)) return;
+    const oldName = current.name;
+    Object.assign(current, payload);
+    if (oldName !== payload.name) applyExerciseRename(oldName, payload.name);
+  } else {
+    state.exercises.push(exercise(id(), payload.name, payload.family, payload.equipment, payload.rest, payload.alternatives));
+  }
+  resetExerciseForm();
   saveState();
   render();
+});
+
+$("#exerciseFamily").addEventListener("change", () => {
+  if ($("#exerciseFamily").value !== "Autre") return;
+  const newGroup = prompt("Nom du nouveau groupe musculaire");
+  if (!newGroup || !newGroup.trim()) {
+    $("#exerciseFamily").value = "Dos";
+    return;
+  }
+  const cleanGroup = newGroup.trim();
+  if (!state.muscleGroups.includes(cleanGroup)) state.muscleGroups.push(cleanGroup);
+  renderExerciseFormHelpers();
+  $("#exerciseFamily").value = cleanGroup;
+});
+
+$("#exerciseAlternativePick").addEventListener("change", () => {
+  const value = $("#exerciseAlternativePick").value;
+  if (value && !activeExerciseAlternatives.includes(value)) activeExerciseAlternatives.push(value);
+  $("#exerciseAlternativePick").value = "";
+  renderExerciseFormHelpers();
+});
+
+$("#exerciseAlternativeTags").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-remove-exercise-alternative]");
+  if (!button) return;
+  activeExerciseAlternatives = activeExerciseAlternatives.filter((name) => name !== button.dataset.removeExerciseAlternative);
+  renderExerciseFormHelpers();
+});
+
+$("#cancelExerciseEdit").addEventListener("click", () => {
+  resetExerciseForm();
+});
+
+$("#muscleGroupManager").addEventListener("click", (event) => {
+  const rename = event.target.closest("[data-rename-muscle]");
+  const remove = event.target.closest("[data-delete-muscle]");
+  if (rename) {
+    const oldName = rename.dataset.renameMuscle;
+    const newName = prompt("Nouveau nom du groupe musculaire", oldName);
+    if (!newName || newName.trim() === oldName) return;
+    const cleanName = newName.trim();
+    state.muscleGroups = state.muscleGroups.map((group) => group === oldName ? cleanName : group);
+    state.exercises.forEach((exerciseItem) => {
+      if (exerciseItem.family === oldName) exerciseItem.family = cleanName;
+    });
+    if (muscleFilter === oldName) muscleFilter = cleanName;
+    saveState();
+    render();
+    return;
+  }
+  if (remove) {
+    const group = remove.dataset.deleteMuscle;
+    const used = state.exercises.some((exerciseItem) => exerciseItem.family === group);
+    if (used && !confirm(`Le groupe "${group}" contient des exercices. Les passer dans "Autre" ?`)) return;
+    state.exercises.forEach((exerciseItem) => {
+      if (exerciseItem.family === group) exerciseItem.family = "Autre";
+    });
+    state.muscleGroups = state.muscleGroups.filter((item) => item !== group);
+    if (muscleFilter === group) muscleFilter = "Tous";
+    saveState();
+    render();
+  }
 });
 
 $("#settingsForm").addEventListener("submit", (event) => {
@@ -2011,17 +2295,76 @@ $("#templateList").addEventListener("submit", (event) => {
   if (!form) return;
   event.preventDefault();
   const data = new FormData(form);
-  templateById(form.dataset.addItem).items.push(planItem(data.get("exerciseId"), Number(data.get("sets")), Number(data.get("minReps")), Number(data.get("maxReps")), Number(data.get("weight")), Number(data.get("increment"))));
+  const rest = Number(data.get("restMinutes") || 0) * 60 + Number(data.get("restSeconds") || 0);
+  templateById(form.dataset.addItem).items.push(planItem(data.get("exerciseId"), Number(data.get("sets")), Number(data.get("minReps")), Number(data.get("maxReps")), Number(data.get("weight")), Number(data.get("increment")), Math.max(10, rest)));
   saveState();
   render();
 });
 
 $("#templateList").addEventListener("click", (event) => {
+  const editTemplateButton = event.target.closest("[data-edit-template]");
+  if (editTemplateButton) {
+    const template = templateById(editTemplateButton.dataset.editTemplate);
+    if (!template) return;
+    $("#editTemplateId").value = template.id;
+    $("#editTemplateName").value = template.name;
+    $("#editTemplateDialog").showModal();
+    return;
+  }
+  const editItem = event.target.closest("[data-edit-item]");
+  if (editItem) {
+    const [templateId, itemId] = editItem.dataset.editItem.split(":");
+    const template = templateById(templateId);
+    const item = template && template.items.find((candidate) => candidate.id === itemId);
+    if (!template || !item) return;
+    const exerciseItem = exerciseById(item.exerciseId);
+    $("#editPlanTemplateId").value = templateId;
+    $("#editPlanItemId").value = itemId;
+    $("#editPlanExercise").innerHTML = exerciseSelectOptions(item.exerciseId);
+    $("#editPlanSets").value = item.sets;
+    $("#editPlanMinReps").value = item.minReps;
+    $("#editPlanMaxReps").value = item.maxReps;
+    $("#editPlanWeight").value = item.weight;
+    $("#editPlanIncrement").value = item.increment;
+    setRestPicker("editPlanRest", item.rest || (exerciseItem && exerciseItem.rest) || 120);
+    $("#editPlanItemDialog").showModal();
+    return;
+  }
   const remove = event.target.closest("[data-remove-item]");
   if (!remove) return;
   const [templateId, itemId] = remove.dataset.removeItem.split(":");
   const template = templateById(templateId);
   template.items = template.items.filter((item) => item.id !== itemId);
+  saveState();
+  render();
+});
+
+$("#editTemplateForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const template = templateById($("#editTemplateId").value);
+  if (!template) return;
+  template.name = $("#editTemplateName").value.trim().toUpperCase();
+  $("#editTemplateDialog").close();
+  saveState();
+  render();
+});
+
+$("#editPlanItemForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const template = templateById($("#editPlanTemplateId").value);
+  const item = template && template.items.find((candidate) => candidate.id === $("#editPlanItemId").value);
+  if (!template || !item) return;
+  const newExerciseId = $("#editPlanExercise").value;
+  const exerciseItem = exerciseById(newExerciseId);
+  item.exerciseId = newExerciseId;
+  item.sets = Number($("#editPlanSets").value);
+  item.minReps = Number($("#editPlanMinReps").value);
+  item.maxReps = Number($("#editPlanMaxReps").value);
+  item.weight = Number($("#editPlanWeight").value);
+  item.increment = Number($("#editPlanIncrement").value);
+  item.targetReps = Array(item.sets).fill(item.minReps);
+  item.rest = restFromPicker("editPlanRest");
+  $("#editPlanItemDialog").close();
   saveState();
   render();
 });
@@ -2037,6 +2380,68 @@ $("#muscleFilters").addEventListener("click", (event) => {
   const filter = event.target.closest("[data-muscle]");
   if (!filter) return;
   muscleFilter = filter.dataset.muscle;
+  render();
+});
+
+$("#exerciseLibrary").addEventListener("click", (event) => {
+  const options = event.target.closest("[data-exercise-options]");
+  if (!options) return;
+  exerciseOptionsId = options.dataset.exerciseOptions;
+  const exerciseItem = exerciseById(exerciseOptionsId);
+  if (!exerciseItem) return;
+  $("#exerciseOptionsTitle").textContent = exerciseItem.name;
+  $("#exerciseOptionsDialog").showModal();
+});
+
+$("#editExerciseOption").addEventListener("click", () => {
+  const exerciseItem = exerciseById(exerciseOptionsId);
+  if (!exerciseItem) return;
+  $("#exerciseOptionsDialog").close();
+  editExercise(exerciseItem);
+});
+
+$("#addExerciseToTemplateOption").addEventListener("click", () => {
+  const exerciseItem = exerciseById(exerciseOptionsId);
+  if (!exerciseItem) return;
+  $("#addExerciseId").value = exerciseItem.id;
+  $("#addExerciseTemplate").innerHTML = templateSelectOptions();
+  setRestPicker("addExerciseRest", exerciseItem.rest || 120);
+  $("#exerciseOptionsDialog").close();
+  $("#addExerciseToTemplateDialog").showModal();
+});
+
+$("#deleteExerciseOption").addEventListener("click", () => {
+  const exerciseItem = exerciseById(exerciseOptionsId);
+  if (!exerciseItem) return;
+  $("#exerciseOptionsDialog").close();
+  const warning = `Attention : supprimer "${exerciseItem.name}" l'enlevera aussi des seances existantes et supprimera les stats enregistrees dessus. Continuer ?`;
+  if (!confirm(warning)) return;
+  pendingDeleteExerciseId = exerciseItem.id;
+  if (!confirm(`Confirmer definitivement la suppression de "${exerciseItem.name}" ?`)) {
+    pendingDeleteExerciseId = null;
+    return;
+  }
+  removeExerciseEverywhere(pendingDeleteExerciseId);
+  pendingDeleteExerciseId = null;
+  saveState();
+  render();
+});
+
+$("#addExerciseToTemplateForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const template = templateById($("#addExerciseTemplate").value);
+  if (!template) return;
+  template.items.push(planItem(
+    $("#addExerciseId").value,
+    Number($("#addExerciseSets").value),
+    Number($("#addExerciseMinReps").value),
+    Number($("#addExerciseMaxReps").value),
+    Number($("#addExerciseWeight").value),
+    Number($("#addExerciseIncrement").value),
+    restFromPicker("addExerciseRest"),
+  ));
+  $("#addExerciseToTemplateDialog").close();
+  saveState();
   render();
 });
 
@@ -2080,7 +2485,7 @@ $("#trackingPanel").addEventListener("submit", (event) => {
   if (profileForm) {
     const profile = activeProfile();
     profile.name = $("#profileName").value;
-    profile.birthDate = $("#profileBirthDate").value;
+    profile.birthDate = displayToBirthDate($("#profileBirthDateText").value) || $("#profileBirthDatePicker").value;
     profile.height = $("#profileHeight").value;
     saveState();
     render();
@@ -2118,6 +2523,11 @@ $("#trackingPanel").addEventListener("click", (event) => {
   const item = state.health.find((candidate) => candidate.profileId === state.activeProfileId && candidate.id === edit.dataset.editHealth);
   if (!item) return;
   fillHealthForm(item);
+});
+
+$("#trackingPanel").addEventListener("change", (event) => {
+  if (!event.target.closest("#profileBirthDatePicker")) return;
+  $("#profileBirthDateText").value = birthDateToDisplay(event.target.value);
 });
 
 $("#trackingPanel").addEventListener("click", (event) => {

@@ -1021,11 +1021,16 @@ main {
 }
 
 .mini-grid {
-  grid-template-columns: 1.6fr repeat(5, minmax(64px, 1fr)) auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   padding: 12px;
   background: #0b0b0d;
   border: 1px solid var(--line);
   border-radius: 16px;
+}
+
+.mini-grid .exercise-pick,
+.mini-grid button {
+  grid-column: 1 / -1;
 }
 
 label {
@@ -1102,6 +1107,112 @@ select:focus {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.tight-row {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+}
+
+.time-picker {
+  display: grid;
+  grid-template-columns: minmax(76px, 1fr) auto minmax(76px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.time-picker span {
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.time-separator {
+  color: var(--ink);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.rest-pair {
+  grid-column: span 2;
+}
+
+.birth-date-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 58px;
+  gap: 8px;
+}
+
+.birth-date-row input[type="date"] {
+  padding: 0;
+  text-align: center;
+}
+
+.birth-date-row input[type="date"]::-webkit-datetime-edit {
+  display: none;
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-chip,
+.manager-chip {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--ink);
+  background: rgba(var(--accent-rgb), 0.1);
+  border: 1px solid rgba(var(--accent-rgb), 0.34);
+  border-radius: 999px;
+  font-weight: 900;
+}
+
+.tag-chip strong,
+.manager-chip button {
+  color: var(--red-2);
+}
+
+.manager-chip button {
+  min-height: 28px;
+  padding: 0 6px;
+  background: transparent;
+  border: 0;
+  font-weight: 900;
+}
+
+.compact-manager {
+  margin: 12px 0;
+}
+
+.exercise-group {
+  display: grid;
+  gap: 8px;
+}
+
+.exercise-group h4 {
+  margin: 10px 0 0;
+  color: var(--red-2);
+  text-transform: uppercase;
+  font-size: 0.82rem;
+  letter-spacing: 0;
+}
+
+.icon-mini {
+  display: inline-grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 1.2rem;
+  font-weight: 950;
 }
 
 .file-button {
@@ -1439,6 +1550,23 @@ dialog::backdrop {
   .input-grid,
   .mini-grid {
     grid-template-columns: 1fr;
+  }
+
+  .rest-pair {
+    grid-column: 1 / -1;
+  }
+
+  .set-row {
+    grid-template-columns: 1fr;
+  }
+
+  .tight-row {
+    width: 100%;
+  }
+
+  .tight-row .small-button,
+  .tight-row .status-pill {
+    flex: 1;
   }
 
   .profile-bar {

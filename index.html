@@ -20,7 +20,7 @@
           <h1>Training System</h1>
           <p class="active-profile-chip" id="activeProfileName">Profil principal</p>
         </div>
-        <span class="version-badge" id="appVersionBadge">V20</span>
+        <span class="version-badge" id="appVersionBadge">v1.2.0</span>
         <button class="settings-button" id="openSettings" type="button" title="Options" aria-label="Options">⚙</button>
         <button class="icon-button" id="installButton" type="button" hidden title="Installer">Install</button>
       </header>
@@ -91,13 +91,18 @@
             <section>
               <h3>Bibliotheque exercices</h3>
               <form class="input-grid compact-form" id="exerciseForm">
+                <input id="exerciseEditId" type="hidden">
                 <label>
                   Exercice
                   <input id="exerciseName" placeholder="Tirage vertical poulie" required>
                 </label>
                 <label>
                   Groupe musculaire
-                  <input id="exerciseFamily" placeholder="Dos">
+                  <select id="exerciseFamily"></select>
+                </label>
+                <label class="wide" id="customFamilyWrap" hidden>
+                  Nouveau groupe
+                  <input id="exerciseFamilyCustom" placeholder="Avant-bras, cardio, mobilité...">
                 </label>
                 <label>
                   Type
@@ -111,14 +116,31 @@
                 </label>
                 <label>
                   Repos par defaut
-                  <input id="exerciseRest" inputmode="decimal" type="text" value="2:00" placeholder="2:30">
+                  <div class="time-picker">
+                    <select id="exerciseRestMinutes" aria-label="Minutes"></select>
+                    <span class="time-separator">:</span>
+                    <select id="exerciseRestSeconds" aria-label="Secondes"></select>
+                  </div>
                 </label>
                 <label class="wide">
                   Alternatives
-                  <input id="exerciseAlternatives" placeholder="Tractions assistees, tirage machine convergente">
+                  <select id="exerciseAlternativePick"></select>
                 </label>
-                <button class="primary-button wide" type="submit">Ajouter l'exercice</button>
+                <div class="chip-list wide" id="exerciseAlternativeTags"></div>
+                <div class="button-row wide">
+                  <button class="primary-button" id="exerciseSubmitButton" type="submit">Ajouter l'exercice</button>
+                  <button class="small-button" id="cancelExerciseEdit" type="button" hidden>Annuler</button>
+                </div>
               </form>
+              <section class="item-card compact-manager">
+                <div class="item-head">
+                  <div>
+                    <strong>Groupes musculaires</strong>
+                    <p class="muted-text">Renommer ou supprimer un groupe personnalise.</p>
+                  </div>
+                </div>
+                <div class="chip-list" id="muscleGroupManager"></div>
+              </section>
               <div class="filter-row" id="equipmentFilters"></div>
               <div class="filter-row" id="muscleFilters"></div>
               <div class="stack" id="exerciseLibrary"></div>
@@ -384,6 +406,74 @@
           <input id="alternativeWeight" inputmode="decimal" type="number" step="0.5" placeholder="Charge">
         </label>
         <button class="primary-button" id="confirmAlternative" type="button">Valider l'alternative</button>
+        <button class="small-button" value="cancel">Annuler</button>
+      </form>
+    </dialog>
+
+    <dialog id="editTemplateDialog">
+      <form method="dialog" class="dialog-card" id="editTemplateForm">
+        <h2>Modifier la seance</h2>
+        <input id="editTemplateId" type="hidden">
+        <label>
+          Nom
+          <input id="editTemplateName" required>
+        </label>
+        <button class="primary-button" type="submit">Sauver</button>
+        <button class="small-button" value="cancel">Annuler</button>
+      </form>
+    </dialog>
+
+    <dialog id="editPlanItemDialog">
+      <form method="dialog" class="dialog-card" id="editPlanItemForm">
+        <h2>Modifier l'exercice</h2>
+        <input id="editPlanTemplateId" type="hidden">
+        <input id="editPlanItemId" type="hidden">
+        <label>Exercice<select id="editPlanExercise"></select></label>
+        <label>Series<input id="editPlanSets" inputmode="numeric" min="1" type="number"></label>
+        <label>Rep min<input id="editPlanMinReps" inputmode="numeric" min="1" type="number"></label>
+        <label>Rep max<input id="editPlanMaxReps" inputmode="numeric" min="1" type="number"></label>
+        <label>Kg<input id="editPlanWeight" inputmode="decimal" min="0" step="0.5" type="number"></label>
+        <label>+ kg<input id="editPlanIncrement" inputmode="decimal" min="0" step="0.5" type="number"></label>
+        <label>Repos
+          <div class="time-picker">
+            <select id="editPlanRestMinutes" aria-label="Minutes"></select>
+            <span class="time-separator">:</span>
+            <select id="editPlanRestSeconds" aria-label="Secondes"></select>
+          </div>
+        </label>
+        <button class="primary-button" type="submit">Sauver</button>
+        <button class="small-button" value="cancel">Annuler</button>
+      </form>
+    </dialog>
+
+    <dialog id="exerciseOptionsDialog">
+      <form method="dialog" class="dialog-card">
+        <h2 id="exerciseOptionsTitle">Exercice</h2>
+        <button class="small-button" id="editExerciseOption" type="button">Modifier</button>
+        <button class="small-button" id="addExerciseToTemplateOption" type="button">Ajouter a une seance</button>
+        <button class="small-button danger" id="deleteExerciseOption" type="button">Supprimer</button>
+        <button class="small-button" value="cancel">Fermer</button>
+      </form>
+    </dialog>
+
+    <dialog id="addExerciseToTemplateDialog">
+      <form method="dialog" class="dialog-card" id="addExerciseToTemplateForm">
+        <h2>Ajouter a une seance</h2>
+        <input id="addExerciseId" type="hidden">
+        <label>Seance<select id="addExerciseTemplate"></select></label>
+        <label>Series<input id="addExerciseSets" inputmode="numeric" min="1" type="number" value="4"></label>
+        <label>Rep min<input id="addExerciseMinReps" inputmode="numeric" min="1" type="number" value="8"></label>
+        <label>Rep max<input id="addExerciseMaxReps" inputmode="numeric" min="1" type="number" value="12"></label>
+        <label>Kg<input id="addExerciseWeight" inputmode="decimal" min="0" step="0.5" type="number" value="40"></label>
+        <label>+ kg<input id="addExerciseIncrement" inputmode="decimal" min="0" step="0.5" type="number" value="2.5"></label>
+        <label>Repos
+          <div class="time-picker">
+            <select id="addExerciseRestMinutes" aria-label="Minutes"></select>
+            <span class="time-separator">:</span>
+            <select id="addExerciseRestSeconds" aria-label="Secondes"></select>
+          </div>
+        </label>
+        <button class="primary-button" type="submit">Ajouter</button>
         <button class="small-button" value="cancel">Annuler</button>
       </form>
     </dialog>
