@@ -1,5 +1,5 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.3.0";
+const appVersion = "v1.3.9";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -30,6 +30,12 @@ let expandedTemplateIds = new Set();
 let currentViewName = "home";
 let activeSummaryLogId = null;
 let exerciseIntroOpen = false;
+let activeTemplateOptionsId = null;
+let activePlanItemOptions = null;
+let activeHealthOptionsId = null;
+let activeScheduleOptionsId = null;
+let activeMuscleGroupOptions = "";
+let libraryExerciseSearch = "";
 
 const sessionUi = {
   phase: "ready",
@@ -86,6 +92,107 @@ function defaultMuscleGroups() {
   return ["Dos", "Pectoraux", "Jambes", "Epaules", "Biceps", "Triceps", "Abdos", "Trapezes", "Autre"];
 }
 
+function extraDefaultExercises() {
+  return [
+    exercise(id(), "Tirage vertical machine guidee", "Dos", "Machine guidee", 120, ["Tirage vertical machine poulie", "Tractions assistees", "Tirage unilateral poulie"]),
+    exercise(id(), "Tirage machine guidee", "Dos", "Machine guidee", 120, ["Tirage vertical machine poulie", "Tirage vertical machine guidee", "Tractions assistees"]),
+    exercise(id(), "Tirage vertical poulie", "Dos", "Poulie", 120, ["Tirage vertical machine poulie", "Tractions assistees", "Tirage vertical machine guidee"]),
+    exercise(id(), "Tirage unilateral poulie", "Dos", "Poulie", 90, ["Tirage vertical machine poulie", "Rowing unilateral poulie", "Pull-over poulie"]),
+    exercise(id(), "Rowing unilateral poulie", "Dos", "Poulie", 90, ["Tirage unilateral poulie", "Rowing poulie basse", "Rowing haltere unilateral"]),
+    exercise(id(), "Rowing machine guidee", "Dos", "Machine guidee", 120, ["Rowing poulie basse", "Rowing haltere", "Tirage horizontal machine"]),
+    exercise(id(), "Rowing haltere", "Dos", "Halteres", 120, ["Rowing haltere unilateral", "Rowing barre", "Rowing poulie basse"]),
+    exercise(id(), "Rowing haltere unilateral", "Dos", "Halteres", 120, ["Rowing poulie basse", "Rowing machine guidee", "Rowing T-bar"]),
+    exercise(id(), "Rowing barre", "Dos", "Barre", 150, ["Rowing T-bar", "Rowing haltere", "Rowing poulie basse"]),
+    exercise(id(), "Rowing machine", "Dos", "Machine guidee", 120, ["Rowing machine guidee", "Rowing poulie basse", "Tirage horizontal machine"]),
+    exercise(id(), "Pull-over machine", "Dos", "Machine guidee", 90, ["Pull-over poulie", "Pull-over haltere"]),
+    exercise(id(), "Pull-over haltere", "Dos", "Halteres", 90, ["Pull-over poulie", "Pull-over machine"]),
+    exercise(id(), "Tractions pronation", "Dos", "Poids du corps", 150, ["Tractions assistees", "Tirage vertical poulie", "Tirage vertical machine guidee"]),
+    exercise(id(), "Tractions supination", "Dos", "Poids du corps", 150, ["Tractions assistees", "Tirage vertical poulie", "Curl barre EZ"]),
+    exercise(id(), "Rack pull", "Dos", "Barre", 180, ["Souleve de terre", "Rowing barre", "Rowing T-bar"]),
+    exercise(id(), "Souleve de terre", "Dos", "Barre", 180, ["Rack pull", "Souleve de terre roumain", "Rowing T-bar"]),
+
+    exercise(id(), "Developpe couche barre", "Pectoraux", "Barre", 150, ["Developpe couche machine", "Developpe couche halteres", "Pompes"]),
+    exercise(id(), "Developpe couche halteres", "Pectoraux", "Halteres", 120, ["Developpe couche barre", "Developpe couche machine", "Pompes"]),
+    exercise(id(), "Pompes", "Pectoraux", "Poids du corps", 90, ["Developpe couche machine", "Developpe couche halteres", "Dips assistes"]),
+    exercise(id(), "Pompes lestee", "Pectoraux", "Poids du corps", 120, ["Dips assistes", "Developpe decline machine", "Developpe couche barre"]),
+    exercise(id(), "Developpe incline machine", "Pectoraux", "Machine guidee", 120, ["Developpe incline halteres", "Developpe incline barre", "Developpe couche machine"]),
+    exercise(id(), "Developpe incline barre", "Pectoraux", "Barre", 150, ["Developpe incline halteres", "Developpe incline machine"]),
+    exercise(id(), "Developpe decline machine", "Pectoraux", "Machine guidee", 120, ["Dips assistes", "Pompes lestee", "Developpe couche machine"]),
+    exercise(id(), "Pec deck", "Pectoraux", "Machine guidee", 75, ["Ecarte poulie vis-a-vis", "Ecarte halteres", "Ecarte machine"]),
+    exercise(id(), "Ecarte halteres", "Pectoraux", "Halteres", 75, ["Ecarte poulie vis-a-vis", "Pec deck", "Ecarte incline halteres"]),
+    exercise(id(), "Ecarte machine", "Pectoraux", "Machine guidee", 75, ["Pec deck", "Ecarte poulie vis-a-vis", "Ecarte halteres"]),
+    exercise(id(), "Ecarte incline halteres", "Pectoraux", "Halteres", 75, ["Ecarte halteres", "Ecarte poulie vis-a-vis", "Developpe incline halteres"]),
+    exercise(id(), "Chest press convergente", "Pectoraux", "Machine guidee", 120, ["Developpe couche machine", "Developpe couche halteres", "Developpe incline machine"]),
+
+    exercise(id(), "Developpe epaules machine", "Epaules", "Machine guidee", 120, ["Developpe militaire halteres", "Developpe militaire barre", "Arnold press"]),
+    exercise(id(), "Developpe militaire barre", "Epaules", "Barre", 150, ["Developpe militaire halteres", "Developpe epaules machine", "Arnold press"]),
+    exercise(id(), "Arnold press", "Epaules", "Halteres", 120, ["Developpe militaire halteres", "Developpe militaire barre", "Developpe epaules machine"]),
+    exercise(id(), "Elevation laterale poulie", "Epaules", "Poulie", 60, ["Elevation laterale halteres", "Machine lateral raise"]),
+    exercise(id(), "Machine lateral raise", "Epaules", "Machine guidee", 60, ["Elevation laterale halteres", "Elevation laterale poulie"]),
+    exercise(id(), "Elevation laterale machine", "Epaules", "Machine guidee", 60, ["Machine lateral raise", "Elevation laterale halteres", "Elevation laterale poulie"]),
+    exercise(id(), "Oiseau halteres", "Epaules", "Halteres", 75, ["Oiseau machine", "Oiseau poulie", "Face pull"]),
+    exercise(id(), "Oiseau poulie", "Epaules", "Poulie", 75, ["Oiseau machine", "Oiseau halteres", "Face pull"]),
+    exercise(id(), "Elevation frontale halteres", "Epaules", "Halteres", 60, ["Elevation frontale poulie", "Developpe militaire halteres"]),
+    exercise(id(), "Elevation frontale poulie", "Epaules", "Poulie", 60, ["Elevation frontale halteres", "Developpe epaules machine"]),
+    exercise(id(), "Upright row poulie", "Epaules", "Poulie", 75, ["Upright row barre", "Elevation laterale poulie"]),
+    exercise(id(), "Upright row barre", "Epaules", "Barre", 90, ["Upright row poulie", "Elevation laterale machine"]),
+
+    exercise(id(), "Goblet squat", "Jambes", "Halteres", 120, ["Goblet squat haltere", "Squat barre", "Presse a cuisses"]),
+    exercise(id(), "Goblet squat haltere", "Jambes", "Halteres", 120, ["Goblet squat", "Squat barre", "Presse a cuisses"]),
+    exercise(id(), "Fentes marchees", "Jambes", "Halteres", 120, ["Fentes bulgares", "Presse unilaterale", "Split squat"]),
+    exercise(id(), "Split squat", "Jambes", "Halteres", 120, ["Fentes bulgares", "Fentes marchees", "Presse unilaterale"]),
+    exercise(id(), "Presse unilaterale", "Jambes", "Machine guidee", 120, ["Fentes bulgares", "Fentes marchees", "Presse a cuisses"]),
+    exercise(id(), "Hack squat machine", "Jambes", "Machine guidee", 150, ["Hack squat", "Presse a cuisses", "Squat barre"]),
+    exercise(id(), "Belt squat", "Jambes", "Machine guidee", 150, ["Presse a cuisses", "Hack squat", "Goblet squat"]),
+    exercise(id(), "Front squat", "Jambes", "Barre", 150, ["Squat barre", "Hack squat", "Presse a cuisses"]),
+    exercise(id(), "Sissy squat", "Jambes", "Poids du corps", 90, ["Leg extension", "Spanish squat"]),
+    exercise(id(), "Spanish squat", "Jambes", "Poids du corps", 90, ["Sissy squat", "Leg extension"]),
+    exercise(id(), "Leg curl unilateral", "Jambes", "Machine guidee", 90, ["Leg curl", "Souleve de terre roumain", "RDL halteres"]),
+    exercise(id(), "Leg curl assis", "Jambes", "Machine guidee", 90, ["Leg curl", "Leg curl unilateral", "Souleve de terre roumain"]),
+    exercise(id(), "RDL halteres", "Jambes", "Halteres", 150, ["Souleve de terre roumain", "Leg curl", "Hip thrust"]),
+    exercise(id(), "Hip thrust machine", "Jambes", "Machine guidee", 120, ["Hip thrust", "Glute bridge machine", "Presse a cuisses"]),
+    exercise(id(), "Glute bridge machine", "Jambes", "Machine guidee", 120, ["Hip thrust", "Hip thrust machine"]),
+    exercise(id(), "Abduction machine", "Jambes", "Machine guidee", 60, ["Abduction poulie", "Fentes bulgares"]),
+    exercise(id(), "Adduction machine", "Jambes", "Machine guidee", 60, ["Adduction poulie", "Presse a cuisses"]),
+    exercise(id(), "Abduction poulie", "Jambes", "Poulie", 60, ["Abduction machine"]),
+    exercise(id(), "Adduction poulie", "Jambes", "Poulie", 60, ["Adduction machine"]),
+    exercise(id(), "Mollets presse", "Jambes", "Machine guidee", 75, ["Mollets debout machine", "Mollets assis machine", "Mollets halteres"]),
+    exercise(id(), "Mollets halteres", "Jambes", "Halteres", 75, ["Mollets debout machine", "Mollets presse", "Mollets assis machine"]),
+    exercise(id(), "Mollets assis machine", "Jambes", "Machine guidee", 75, ["Mollets debout machine", "Mollets presse", "Mollets halteres"]),
+
+    exercise(id(), "Curl pupitre machine", "Biceps", "Machine guidee", 75, ["Curl barre EZ", "Curl pupitre", "Curl halteres"]),
+    exercise(id(), "Curl pupitre", "Biceps", "Barre", 75, ["Curl pupitre machine", "Curl barre EZ", "Curl incline halteres"]),
+    exercise(id(), "Curl poulie basse", "Biceps", "Poulie", 75, ["Curl barre EZ", "Curl halteres", "Curl corde poulie"]),
+    exercise(id(), "Curl corde poulie", "Biceps", "Poulie", 75, ["Curl marteau", "Curl poulie basse", "Curl halteres neutre"]),
+    exercise(id(), "Curl halteres neutre", "Biceps", "Halteres", 75, ["Curl marteau", "Curl corde poulie", "Curl halteres"]),
+    exercise(id(), "Curl machine", "Biceps", "Machine guidee", 75, ["Curl pupitre machine", "Curl poulie basse", "Curl barre EZ"]),
+    exercise(id(), "Curl concentration", "Biceps", "Halteres", 75, ["Curl incline halteres", "Curl pupitre", "Curl halteres"]),
+    exercise(id(), "Curl spider", "Biceps", "Barre", 75, ["Curl pupitre", "Curl incline halteres", "Curl machine"]),
+
+    exercise(id(), "Extension triceps haltere", "Triceps", "Halteres", 75, ["Extension haltere nuque", "Extension triceps corde", "Barre au front"]),
+    exercise(id(), "Extension haltere nuque", "Triceps", "Halteres", 75, ["Extension triceps haltere", "Barre au front", "Extension triceps corde"]),
+    exercise(id(), "Extension barre poulie", "Triceps", "Poulie", 75, ["Extension triceps poulie", "Extension triceps corde", "Barre au front"]),
+    exercise(id(), "Dips", "Triceps", "Poids du corps", 120, ["Dips assistes", "Developpe couche prise serree", "Pompes diamant"]),
+    exercise(id(), "Developpe couche prise serree", "Triceps", "Barre", 120, ["Dips", "Dips assistes", "Barre au front"]),
+    exercise(id(), "Pompes diamant", "Triceps", "Poids du corps", 90, ["Dips", "Extension triceps poulie", "Developpe couche prise serree"]),
+    exercise(id(), "Kickback triceps", "Triceps", "Halteres", 60, ["Extension triceps corde", "Extension triceps haltere"]),
+    exercise(id(), "Extension triceps machine", "Triceps", "Machine guidee", 75, ["Extension triceps poulie", "Extension barre poulie", "Extension triceps corde"]),
+
+    exercise(id(), "Crunch machine", "Abdos", "Machine guidee", 60, ["Crunch poulie", "Crunch au sol", "Crunch inverse"]),
+    exercise(id(), "Crunch au sol", "Abdos", "Poids du corps", 45, ["Crunch machine", "Crunch poulie", "Crunch inverse"]),
+    exercise(id(), "Crunch inverse", "Abdos", "Poids du corps", 60, ["Releve de jambes suspendu", "Releve de genoux chaise romaine", "Crunch au sol"]),
+    exercise(id(), "Releve de genoux chaise romaine", "Abdos", "Poids du corps", 75, ["Releve de jambes suspendu", "Crunch inverse"]),
+    exercise(id(), "Dead bug", "Abdos", "Poids du corps", 45, ["Gainage", "Planche laterale", "Crunch au sol"]),
+    exercise(id(), "Planche laterale", "Abdos", "Poids du corps", 45, ["Gainage", "Dead bug"]),
+    exercise(id(), "Rotation buste poulie", "Abdos", "Poulie", 60, ["Pallof press", "Planche laterale"]),
+    exercise(id(), "Pallof press", "Abdos", "Poulie", 60, ["Rotation buste poulie", "Gainage"]),
+
+    exercise(id(), "Shrugs barre", "Trapezes", "Barre", 90, ["Shrugs halteres", "Shrugs machine"]),
+    exercise(id(), "Shrugs machine", "Trapezes", "Machine guidee", 90, ["Shrugs halteres", "Shrugs barre"]),
+    exercise(id(), "Farmer walk", "Trapezes", "Halteres", 90, ["Shrugs halteres", "Shrugs barre"]),
+  ];
+}
+
 function starterState() {
   const ids = Array.from({ length: 34 }, id);
   const tplPull = id();
@@ -131,6 +238,7 @@ function starterState() {
       exercise(ids[31], "Gainage", "Abdos", "Poids du corps", 45, ["Dead bug", "Planche laterale"]),
       exercise(ids[32], "Releve de jambes suspendu", "Abdos", "Poids du corps", 75, ["Releve de genoux chaise romaine", "Crunch inverse"]),
       exercise(ids[33], "Shrugs halteres", "Trapezes", "Halteres", 90, ["Shrugs barre", "Shrugs machine"]),
+      ...extraDefaultExercises(),
     ],
     templates: [
       { id: tplPull, profileId, name: "PULL", items: [planItem(ids[0], 4, 8, 12, 80, 2.5), planItem(ids[1], 3, 10, 12, 55, 2.5), planItem(ids[6], 3, 10, 15, 14, 1)] },
@@ -167,7 +275,7 @@ function loadState() {
 
 function normalizeState(saved) {
   const base = starterState();
-  const mergedExercises = mergeExercises(saved.exercises || [], base.exercises);
+  const mergedExercises = expandAlternativeExercises(mergeExercises(saved.exercises || [], base.exercises));
   const fallbackProfileId = saved.activeProfileId || (saved.profiles && saved.profiles[0] && saved.profiles[0].id) || id();
   const profiles = saved.profiles && saved.profiles.length ? saved.profiles : [{
     id: fallbackProfileId,
@@ -198,6 +306,28 @@ function normalizeState(saved) {
   };
 }
 
+function inferEquipmentFromName(name, fallback) {
+  const text = String(name || "").toLowerCase();
+  if (text.includes("poulie") || text.includes("corde")) return "Poulie";
+  if (text.includes("machine") || text.includes("guidee") || text.includes("assist")) return "Machine guidee";
+  if (text.includes("haltere")) return "Halteres";
+  if (text.includes("barre") || text.includes("ez") || text.includes("t-bar")) return "Barre";
+  if (text.includes("pompe") || text.includes("traction") || text.includes("gainage") || text.includes("dips")) return "Poids du corps";
+  return fallback || "Machine guidee";
+}
+
+function expandAlternativeExercises(exercises) {
+  const byName = new Map(exercises.map((item) => [item.name.toLowerCase(), item]));
+  exercises.forEach((item) => {
+    (item.alternatives || []).forEach((name) => {
+      const cleanName = String(name || "").trim();
+      if (!cleanName || byName.has(cleanName.toLowerCase())) return;
+      byName.set(cleanName.toLowerCase(), exercise(id(), cleanName, item.family || "Autre", inferEquipmentFromName(cleanName, item.equipment), item.rest || 90, []));
+    });
+  });
+  return [...byName.values()];
+}
+
 function normalizeMuscleGroups(savedGroups, exercises) {
   const groups = [...defaultMuscleGroups(), ...(savedGroups || []), ...(exercises || []).map((item) => item.family).filter(Boolean)];
   return [...new Set(groups.map((item) => item === "Ischios" ? "Jambes" : item).filter(Boolean))];
@@ -214,7 +344,20 @@ function migratedSettings(saved) {
 function mergeExercises(existing, defaults) {
   const byName = new Map(existing.map((item) => [item.name.toLowerCase(), item]));
   defaults.forEach((item) => {
-    if (!byName.has(item.name.toLowerCase())) byName.set(item.name.toLowerCase(), item);
+    const key = item.name.toLowerCase();
+    const current = byName.get(key);
+    if (!current) {
+      byName.set(key, item);
+      return;
+    }
+    const alternatives = [...new Set([...(current.alternatives || []), ...(item.alternatives || [])])].filter((name) => name && name.toLowerCase() !== key);
+    byName.set(key, {
+      ...current,
+      family: current.family || item.family,
+      equipment: current.equipment || item.equipment,
+      rest: current.rest || item.rest,
+      alternatives,
+    });
   });
   return [...byName.values()];
 }
@@ -287,6 +430,19 @@ function duplicateTemplate(templateId) {
   };
   state.templates.push(copy);
   expandedTemplateIds.add(copy.id);
+}
+
+function deleteTemplate(templateId) {
+  const template = templateById(templateId);
+  if (!template) return;
+  const usedInSchedule = state.schedule.some((item) => item.templateId === templateId);
+  const usedInLogs = state.logs.some((log) => log.templateId === templateId);
+  const detail = usedInSchedule || usedInLogs ? " Cette action supprimera aussi son planning et son historique associe." : "";
+  if (!confirm(`Supprimer la seance "${template.name}" ?${detail}`)) return;
+  state.templates = state.templates.filter((item) => item.id !== templateId);
+  state.schedule = state.schedule.filter((item) => item.templateId !== templateId);
+  state.logs = state.logs.filter((log) => log.templateId !== templateId);
+  expandedTemplateIds.delete(templateId);
 }
 
 function createPplTemplates() {
@@ -547,10 +703,8 @@ function pendingScheduledFor(dateKey) {
 }
 
 function currentTemplate() {
-  const plannedToday = scheduledFor(todayKey);
   const planned = pendingScheduledFor(todayKey)[0];
-  if (plannedToday.length && !planned) return null;
-  return planned ? templateById(planned.templateId) : profileTemplates()[0];
+  return planned ? templateById(planned.templateId) : null;
 }
 
 function todayTemplate() {
@@ -685,6 +839,13 @@ function birthDateToDisplay(value) {
   return `${day}/${month}/${year}`;
 }
 
+function formatBirthDateDisplay(value) {
+  const digits = String(value || "").replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
 function displayToBirthDate(value) {
   const text = String(value || "").trim();
   if (!text) return "";
@@ -693,6 +854,36 @@ function displayToBirthDate(value) {
   if (!match) return "";
   const [, day, month, year] = match;
   return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
+function normalizeSearch(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function exerciseMatchesSearch(exerciseItem, query) {
+  const cleanQuery = normalizeSearch(query);
+  if (!cleanQuery) return true;
+  const haystack = [
+    exerciseItem.name,
+    exerciseItem.family,
+    exerciseItem.equipment,
+    ...(exerciseItem.alternatives || []),
+  ].map(normalizeSearch).join(" ");
+  return haystack.includes(cleanQuery);
+}
+
+function highlightMatch(value, query) {
+  const text = String(value || "");
+  const cleanQuery = normalizeSearch(query);
+  if (!cleanQuery) return escapeHtml(text);
+  const normalizedText = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const index = normalizedText.toLowerCase().indexOf(cleanQuery);
+  if (index < 0) return escapeHtml(text);
+  return `${escapeHtml(text.slice(0, index))}<mark>${escapeHtml(text.slice(index, index + cleanQuery.length))}</mark>${escapeHtml(text.slice(index + cleanQuery.length))}`;
 }
 
 function restLabel(seconds) {
@@ -770,12 +961,27 @@ function groupedExercises(exercises) {
     .filter((section) => section.items.length);
 }
 
-function exerciseSelectOptions(selectedId = "") {
-  return groupedExercises(state.exercises).map((section) => `
+function filteredExercises(query = "") {
+  return state.exercises.filter((exerciseItem) => exerciseMatchesSearch(exerciseItem, query));
+}
+
+function exerciseSelectOptions(selectedId = "", query = "") {
+  return groupedExercises(filteredExercises(query)).map((section) => `
     <optgroup label="${escapeHtml(section.group)}">
       ${section.items.map((exerciseItem) => `<option value="${exerciseItem.id}" ${exerciseItem.id === selectedId ? "selected" : ""}>${escapeHtml(exerciseItem.name)}</option>`).join("")}
     </optgroup>
   `).join("");
+}
+
+function exerciseSuggestionButtons(query, selectedId = "") {
+  const cleanQuery = normalizeSearch(query);
+  if (!cleanQuery) return "";
+  return filteredExercises(query).slice(0, 8).map((exerciseItem) => `
+    <button class="suggestion-chip ${exerciseItem.id === selectedId ? "active" : ""}" data-pick-exercise="${exerciseItem.id}" type="button">
+      ${highlightMatch(exerciseItem.name, query)}
+      <span>${escapeHtml(exerciseItem.family)} - ${escapeHtml(exerciseItem.equipment)}</span>
+    </button>
+  `).join("") || `<p class="empty compact-empty">Aucun exercice trouve.</p>`;
 }
 
 function templateSelectOptions(selectedId = "") {
@@ -819,8 +1025,35 @@ function renderExerciseFormHelpers() {
   `).join("") || `<p class="muted-text">Aucune alternative ajoutee.</p>`;
   $("#muscleGroupManager").innerHTML = allMuscleGroups().map((group) => {
     const locked = defaultMuscleGroups().includes(group);
-    return `<span class="manager-chip">${escapeHtml(group)}${locked ? "" : `<button data-rename-muscle="${escapeHtml(group)}" type="button">Renommer</button><button data-delete-muscle="${escapeHtml(group)}" type="button">Suppr.</button>`}</span>`;
+    return `<span class="manager-chip">${escapeHtml(group)}${locked ? "" : `<button class="icon-mini chip-options" data-muscle-group-options="${escapeHtml(group)}" type="button" aria-label="Options ${escapeHtml(group)}">...</button>`}</span>`;
   }).join("");
+}
+
+function renameMuscleGroup(oldName) {
+  if (!oldName) return;
+  const newName = prompt("Nouveau nom du groupe musculaire", oldName);
+  if (!newName || newName.trim() === oldName) return;
+  const cleanName = newName.trim();
+  state.muscleGroups = state.muscleGroups.map((group) => group === oldName ? cleanName : group);
+  state.exercises.forEach((exerciseItem) => {
+    if (exerciseItem.family === oldName) exerciseItem.family = cleanName;
+  });
+  if (muscleFilter === oldName) muscleFilter = cleanName;
+  saveState();
+  render();
+}
+
+function deleteMuscleGroup(group) {
+  if (!group) return;
+  const used = state.exercises.some((exerciseItem) => exerciseItem.family === group);
+  if (used && !confirm(`Le groupe "${group}" contient des exercices. Les passer dans "Autre" ?`)) return;
+  state.exercises.forEach((exerciseItem) => {
+    if (exerciseItem.family === group) exerciseItem.family = "Autre";
+  });
+  state.muscleGroups = state.muscleGroups.filter((item) => item !== group);
+  if (muscleFilter === group) muscleFilter = "Tous";
+  saveState();
+  render();
 }
 
 function editExercise(exerciseItem) {
@@ -1528,17 +1761,15 @@ function renderBuilder() {
       <div class="item-head">
         <button class="template-toggle ${expanded ? "active" : ""}" data-toggle-template="${template.id}" type="button" aria-expanded="${expanded}">
           <span class="template-title"><strong>${escapeHtml(template.name)}</strong><small>${template.items.length} exos</small></span>
-          <span class="chevron" aria-hidden="true">V</span>
+          <span class="chevron" aria-hidden="true"></span>
         </button>
-        <div class="button-row tight-row">
-          <span class="status-pill">${template.items.length} exos</span>
-          <button class="small-button" data-edit-template="${template.id}" type="button">Modifier</button>
-          <button class="small-button" data-duplicate-template="${template.id}" type="button">Dupliquer</button>
-        </div>
+        <button class="icon-mini" data-template-options="${template.id}" type="button" aria-label="Options ${escapeHtml(template.name)}">...</button>
       </div>
       <div class="template-body ${expanded ? "active" : ""}">
       <form class="mini-grid" data-add-item="${template.id}">
+        <label class="exercise-search-field">Recherche exercice<input class="exercise-search-input" type="search" placeholder="Squat, tirage, curl..." autocomplete="off"></label>
         <label class="exercise-pick">Exercice<select name="exerciseId">${exerciseSelectOptions()}</select></label>
+        <div class="exercise-suggestions" data-exercise-suggestions></div>
         <label>Series<input name="sets" inputmode="numeric" min="1" type="number" value="4"></label>
         <label>Rep min<input name="minReps" inputmode="numeric" min="1" type="number" value="8"></label>
         <label>Rep max<input name="maxReps" inputmode="numeric" min="1" type="number" value="12"></label>
@@ -1567,8 +1798,11 @@ function renderBuilder() {
   const exercises = state.exercises.filter((item) => {
     const equipmentMatch = equipmentFilter === "Tous" || item.equipment === equipmentFilter;
     const muscleMatch = muscleFilter === "Tous" || item.family === muscleFilter;
-    return equipmentMatch && muscleMatch;
+    const searchMatch = exerciseMatchesSearch(item, libraryExerciseSearch);
+    return equipmentMatch && muscleMatch && searchMatch;
   });
+  const searchInput = $("#exerciseLibrarySearch");
+  if (searchInput && searchInput.value !== libraryExerciseSearch) searchInput.value = libraryExerciseSearch;
   $("#exerciseLibrary").innerHTML = groupedExercises(exercises).map((section) => `
     <section class="exercise-group">
       <h4>${escapeHtml(section.group)}</h4>
@@ -1576,17 +1810,57 @@ function renderBuilder() {
         <article class="item-card exercise-card">
           <div class="item-head">
             <div>
-              <strong>${escapeHtml(exerciseItem.name)}</strong>
+              <strong>${highlightMatch(exerciseItem.name, libraryExerciseSearch)}</strong>
               <p>${escapeHtml(exerciseItem.equipment)} - repos ${restLabel(exerciseItem.rest)}</p>
             </div>
             <button class="icon-mini" data-exercise-options="${exerciseItem.id}" type="button" aria-label="Options ${escapeHtml(exerciseItem.name)}">...</button>
           </div>
-          <p class="hint">Alternatives : ${(exerciseItem.alternatives || []).map(escapeHtml).join(", ") || "aucune"}</p>
+          <p class="hint">Alternatives : ${(exerciseItem.alternatives || []).map((name) => highlightMatch(name, libraryExerciseSearch)).join(", ") || "aucune"}</p>
         </article>
       `).join("")}
     </section>
   `).join("") || `<p class="empty">Aucun exercice pour ces filtres.</p>`;
+  enhanceBuilderRows();
   renderExerciseFormHelpers();
+}
+
+function enhanceBuilderRows() {
+  document.querySelectorAll("#templateList .template-items .set-row").forEach((row) => {
+    const edit = row.querySelector("[data-edit-item]");
+    const remove = row.querySelector("[data-remove-item]");
+    const source = edit || remove || row.querySelector("[data-move-item]");
+    if (!source) return;
+    const value = source.dataset.editItem || source.dataset.removeItem || source.dataset.moveItem;
+    const [templateId, itemId] = value.split(":");
+    const template = templateById(templateId);
+    const item = template && template.items.find((candidate) => candidate.id === itemId);
+    if (!template || !item) return;
+    const exercise = exerciseById(item.exerciseId);
+    row.className = "set-row plan-item-row";
+    row.draggable = false;
+    row.dataset.planRow = `${templateId}:${itemId}`;
+    row.innerHTML = `
+      <span>${escapeHtml(exercise && exercise.name)} - ${item.sets} series - ${item.minReps}/${item.maxReps} reps - ${item.weight} kg - repos ${restLabel(item.rest || (exercise && exercise.rest) || 0)}</span>
+      <button class="icon-mini" data-plan-item-options="${templateId}:${itemId}" type="button" aria-label="Options ${escapeHtml(exercise && exercise.name)}">...</button>
+      <button class="drag-handle" data-drag-handle type="button" aria-label="Deplacer ${escapeHtml(exercise && exercise.name)}"><span>&lt;</span><span>&gt;</span></button>
+    `;
+  });
+}
+
+function updateExerciseSearchForm(form) {
+  if (!form) return;
+  const input = form.querySelector(".exercise-search-input");
+  const select = form.querySelector('select[name="exerciseId"]');
+  const suggestions = form.querySelector("[data-exercise-suggestions]");
+  if (!input || !select || !suggestions) return;
+  const previous = select.value;
+  select.innerHTML = exerciseSelectOptions(previous, input.value);
+  if (previous && [...select.options].some((option) => option.value === previous)) {
+    select.value = previous;
+  } else if (select.options.length) {
+    select.selectedIndex = 0;
+  }
+  suggestions.innerHTML = exerciseSuggestionButtons(input.value, select.value);
 }
 
 function renderEquipmentFilters() {
@@ -1607,7 +1881,7 @@ function renderCalendar() {
   const items = [...profileSchedule()].sort((a, b) => a.date.localeCompare(b.date));
   $("#calendarList").innerHTML = items.map((item) => {
     const template = templateById(item.templateId);
-    return `<article class="item-card set-row"><span>${item.date} - ${escapeHtml(template && template.name)}${item.repeatWeekly ? " - chaque semaine" : ""}</span><div class="button-row tight-row">${scheduleStatusPill(item, item.date)}<button class="small-button danger" data-delete-schedule="${item.id}" type="button">Suppr.</button></div></article>`;
+    return `<article class="item-card set-row schedule-row"><span>${item.date} - ${escapeHtml(template && template.name)}${item.repeatWeekly ? " - chaque semaine" : ""}</span><div class="schedule-actions">${scheduleStatusPill(item, item.date)}<button class="icon-mini" data-schedule-options="${item.id}" type="button" aria-label="Options planning">...</button></div></article>`;
   }).join("") || `<p class="empty">Aucune seance planifiee.</p>`;
 }
 
@@ -1671,6 +1945,7 @@ function renderTracking() {
 
       <form class="input-grid compact-form" id="healthForm">
         <input id="healthEditId" type="hidden">
+        <label>Date des mesures<input id="healthDate" type="date" value="${escapeHtml(lastHealth.date || todayKey)}"></label>
         <label>Poids kg<input id="healthWeight" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.weight || "")}" placeholder="82.5"></label>
         <label>Bodyfat %<input id="healthBodyfat" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.bodyfat || "")}" placeholder="15"></label>
         <label>Tour taille cm<input id="healthWaist" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.waist || "")}" placeholder="84"></label>
@@ -1748,7 +2023,7 @@ function renderHealthEntry(item) {
     `cuisses D/G ${item.thighRight || "-"}/${item.thighLeft || "-"}`,
     `mollets D/G ${item.calfRight || "-"}/${item.calfLeft || "-"}`,
   ];
-  return `<article class="item-card health-entry"><div class="item-head"><strong>${item.date}</strong><button class="small-button" data-edit-health="${item.id}" type="button">Modifier</button></div><p>${parts.join(" - ")}</p></article>`;
+  return `<article class="item-card health-entry"><div class="item-head"><strong>${item.date}</strong><button class="icon-mini" data-health-options="${item.id}" type="button" aria-label="Options mesures ${item.date}">...</button></div><p>${parts.join(" - ")}</p></article>`;
 }
 
 function bestOneRms() {
@@ -2357,34 +2632,32 @@ $("#cancelExerciseEdit").addEventListener("click", () => {
 });
 
 $("#muscleGroupManager").addEventListener("click", (event) => {
+  const options = event.target.closest("[data-muscle-group-options]");
+  if (options) {
+    activeMuscleGroupOptions = options.dataset.muscleGroupOptions;
+    $("#muscleGroupActionsTitle").textContent = activeMuscleGroupOptions;
+    $("#muscleGroupActionsDialog").showModal();
+    return;
+  }
   const rename = event.target.closest("[data-rename-muscle]");
   const remove = event.target.closest("[data-delete-muscle]");
   if (rename) {
-    const oldName = rename.dataset.renameMuscle;
-    const newName = prompt("Nouveau nom du groupe musculaire", oldName);
-    if (!newName || newName.trim() === oldName) return;
-    const cleanName = newName.trim();
-    state.muscleGroups = state.muscleGroups.map((group) => group === oldName ? cleanName : group);
-    state.exercises.forEach((exerciseItem) => {
-      if (exerciseItem.family === oldName) exerciseItem.family = cleanName;
-    });
-    if (muscleFilter === oldName) muscleFilter = cleanName;
-    saveState();
-    render();
+    renameMuscleGroup(rename.dataset.renameMuscle);
     return;
   }
   if (remove) {
-    const group = remove.dataset.deleteMuscle;
-    const used = state.exercises.some((exerciseItem) => exerciseItem.family === group);
-    if (used && !confirm(`Le groupe "${group}" contient des exercices. Les passer dans "Autre" ?`)) return;
-    state.exercises.forEach((exerciseItem) => {
-      if (exerciseItem.family === group) exerciseItem.family = "Autre";
-    });
-    state.muscleGroups = state.muscleGroups.filter((item) => item !== group);
-    if (muscleFilter === group) muscleFilter = "Tous";
-    saveState();
-    render();
+    deleteMuscleGroup(remove.dataset.deleteMuscle);
   }
+});
+
+$("#muscleGroupActionRename").addEventListener("click", () => {
+  $("#muscleGroupActionsDialog").close();
+  renameMuscleGroup(activeMuscleGroupOptions);
+});
+
+$("#muscleGroupActionDelete").addEventListener("click", () => {
+  $("#muscleGroupActionsDialog").close();
+  deleteMuscleGroup(activeMuscleGroupOptions);
 });
 
 $("#settingsForm").addEventListener("submit", (event) => {
@@ -2598,13 +2871,38 @@ $("#templateList").addEventListener("submit", (event) => {
   if (!form) return;
   event.preventDefault();
   const data = new FormData(form);
+  if (!data.get("exerciseId")) {
+    alert("Aucun exercice selectionne.");
+    return;
+  }
   const rest = Number(data.get("restMinutes") || 0) * 60 + Number(data.get("restSeconds") || 0);
   templateById(form.dataset.addItem).items.push(planItem(data.get("exerciseId"), Number(data.get("sets")), Number(data.get("minReps")), Number(data.get("maxReps")), Number(data.get("weight")), Number(data.get("increment")), Math.max(10, rest)));
   saveState();
   render();
 });
 
+$("#templateList").addEventListener("input", (event) => {
+  const input = event.target.closest(".exercise-search-input");
+  if (!input) return;
+  updateExerciseSearchForm(input.closest("[data-add-item]"));
+});
+
+$("#templateList").addEventListener("change", (event) => {
+  const select = event.target.closest('select[name="exerciseId"]');
+  if (!select) return;
+  updateExerciseSearchForm(select.closest("[data-add-item]"));
+});
+
 $("#templateList").addEventListener("click", (event) => {
+  const pickExercise = event.target.closest("[data-pick-exercise]");
+  if (pickExercise) {
+    const form = pickExercise.closest("[data-add-item]");
+    const select = form && form.querySelector('select[name="exerciseId"]');
+    if (!select) return;
+    select.value = pickExercise.dataset.pickExercise;
+    updateExerciseSearchForm(form);
+    return;
+  }
   const toggle = event.target.closest("[data-toggle-template]");
   if (toggle) {
     if (expandedTemplateIds.has(toggle.dataset.toggleTemplate)) {
@@ -2613,6 +2911,25 @@ $("#templateList").addEventListener("click", (event) => {
       expandedTemplateIds.add(toggle.dataset.toggleTemplate);
     }
     renderBuilder();
+    return;
+  }
+  const templateOptions = event.target.closest("[data-template-options]");
+  if (templateOptions) {
+    activeTemplateOptionsId = templateOptions.dataset.templateOptions;
+    const template = templateById(activeTemplateOptionsId);
+    $("#templateActionsTitle").textContent = template ? template.name : "Seance";
+    $("#templateActionsDialog").showModal();
+    return;
+  }
+  const planItemOptions = event.target.closest("[data-plan-item-options]");
+  if (planItemOptions) {
+    const [templateId, itemId] = planItemOptions.dataset.planItemOptions.split(":");
+    const template = templateById(templateId);
+    const item = template && template.items.find((candidate) => candidate.id === itemId);
+    const exercise = item && exerciseById(item.exerciseId);
+    activePlanItemOptions = { templateId, itemId };
+    $("#planItemActionsTitle").textContent = (exercise && exercise.name) || "Exercice";
+    $("#planItemActionsDialog").showModal();
     return;
   }
   const editTemplateButton = event.target.closest("[data-edit-template]");
@@ -2627,6 +2944,13 @@ $("#templateList").addEventListener("click", (event) => {
   const duplicateTemplateButton = event.target.closest("[data-duplicate-template]");
   if (duplicateTemplateButton) {
     duplicateTemplate(duplicateTemplateButton.dataset.duplicateTemplate);
+    saveState();
+    render();
+    return;
+  }
+  const deleteTemplateButton = event.target.closest("[data-delete-template]");
+  if (deleteTemplateButton) {
+    deleteTemplate(deleteTemplateButton.dataset.deleteTemplate);
     saveState();
     render();
     return;
@@ -2683,6 +3007,63 @@ $("#editTemplateForm").addEventListener("submit", (event) => {
   render();
 });
 
+$("#templateActionEdit").addEventListener("click", () => {
+  const template = templateById(activeTemplateOptionsId);
+  if (!template) return;
+  $("#templateActionsDialog").close();
+  $("#editTemplateId").value = template.id;
+  $("#editTemplateName").value = template.name;
+  $("#editTemplateDialog").showModal();
+});
+
+$("#templateActionDuplicate").addEventListener("click", () => {
+  if (!activeTemplateOptionsId) return;
+  $("#templateActionsDialog").close();
+  duplicateTemplate(activeTemplateOptionsId);
+  saveState();
+  render();
+});
+
+$("#templateActionDelete").addEventListener("click", () => {
+  if (!activeTemplateOptionsId) return;
+  $("#templateActionsDialog").close();
+  deleteTemplate(activeTemplateOptionsId);
+  saveState();
+  render();
+});
+
+$("#planItemActionEdit").addEventListener("click", () => {
+  if (!activePlanItemOptions) return;
+  const template = templateById(activePlanItemOptions.templateId);
+  const item = template && template.items.find((candidate) => candidate.id === activePlanItemOptions.itemId);
+  if (!template || !item) return;
+  const exerciseItem = exerciseById(item.exerciseId);
+  $("#planItemActionsDialog").close();
+  $("#editPlanTemplateId").value = template.id;
+  $("#editPlanItemId").value = item.id;
+  $("#editPlanExercise").innerHTML = exerciseSelectOptions(item.exerciseId);
+  $("#editPlanSets").value = item.sets;
+  $("#editPlanMinReps").value = item.minReps;
+  $("#editPlanMaxReps").value = item.maxReps;
+  $("#editPlanWeight").value = item.weight;
+  $("#editPlanIncrement").value = item.increment;
+  setRestPicker("editPlanRest", item.rest || (exerciseItem && exerciseItem.rest) || 120);
+  $("#editPlanItemDialog").showModal();
+});
+
+$("#planItemActionDelete").addEventListener("click", () => {
+  if (!activePlanItemOptions) return;
+  const template = templateById(activePlanItemOptions.templateId);
+  if (!template) return;
+  const item = template.items.find((candidate) => candidate.id === activePlanItemOptions.itemId);
+  const exercise = item && exerciseById(item.exerciseId);
+  if (!confirm(`Supprimer "${(exercise && exercise.name) || "cet exercice"}" de la seance ?`)) return;
+  $("#planItemActionsDialog").close();
+  template.items = template.items.filter((item) => item.id !== activePlanItemOptions.itemId);
+  saveState();
+  render();
+});
+
 $("#editPlanItemForm").addEventListener("submit", (event) => {
   event.preventDefault();
   const template = templateById($("#editPlanTemplateId").value);
@@ -2708,6 +3089,11 @@ $("#equipmentFilters").addEventListener("click", (event) => {
   if (!filter) return;
   equipmentFilter = filter.dataset.equipment;
   render();
+});
+
+$("#exerciseLibrarySearch").addEventListener("input", (event) => {
+  libraryExerciseSearch = event.target.value;
+  renderBuilder();
 });
 
 $("#muscleFilters").addEventListener("click", (event) => {
@@ -2795,11 +3181,165 @@ $("#calendarModes").addEventListener("click", (event) => {
 });
 
 $("#calendarList").addEventListener("click", (event) => {
+  const options = event.target.closest("[data-schedule-options]");
+  if (options) {
+    activeScheduleOptionsId = options.dataset.scheduleOptions;
+    const item = state.schedule.find((candidate) => candidate.id === activeScheduleOptionsId);
+    const template = item && templateById(item.templateId);
+    $("#scheduleActionsTitle").textContent = template ? template.name : "Planning";
+    $("#scheduleActionsDialog").showModal();
+    return;
+  }
   const remove = event.target.closest("[data-delete-schedule]");
   if (!remove) return;
   state.schedule = state.schedule.filter((item) => item.id !== remove.dataset.deleteSchedule);
   saveState();
   render();
+});
+
+$("#scheduleActionDelete").addEventListener("click", () => {
+  if (!activeScheduleOptionsId) return;
+  $("#scheduleActionsDialog").close();
+  state.schedule = state.schedule.filter((item) => item.id !== activeScheduleOptionsId);
+  activeScheduleOptionsId = null;
+  saveState();
+  render();
+});
+
+let draggedPlanRow = null;
+let pointerPlanDrag = null;
+
+$("#templateList").addEventListener("dragstart", (event) => {
+  if (event.target.closest("[data-drag-handle]")) return;
+  const row = event.target.closest("[data-plan-row]");
+  if (!row) return;
+  draggedPlanRow = row.dataset.planRow;
+  row.classList.add("dragging");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", draggedPlanRow);
+  }
+});
+
+function clearPlanDropMarkers() {
+  document.querySelectorAll(".drop-before, .drop-after").forEach((row) => {
+    row.classList.remove("drop-before", "drop-after");
+  });
+}
+
+function finishPointerPlanDrag(commit) {
+  if (!pointerPlanDrag) return;
+  const drag = pointerPlanDrag;
+  clearPlanDropMarkers();
+  if (drag.ghost) drag.ghost.remove();
+  if (drag.sourceRow) drag.sourceRow.classList.remove("drag-source");
+  if (commit && drag.targetId) {
+    const template = templateById(drag.templateId);
+    if (template) {
+      const sourceIndex = template.items.findIndex((item) => item.id === drag.itemId);
+      const targetIndex = template.items.findIndex((item) => item.id === drag.targetId);
+      if (sourceIndex >= 0 && targetIndex >= 0 && sourceIndex !== targetIndex) {
+        const [item] = template.items.splice(sourceIndex, 1);
+        const adjustedTarget = template.items.findIndex((candidate) => candidate.id === drag.targetId);
+        template.items.splice(drag.after ? adjustedTarget + 1 : adjustedTarget, 0, item);
+        saveState();
+      }
+    }
+  }
+  pointerPlanDrag = null;
+  if (commit) renderBuilder();
+}
+
+$("#templateList").addEventListener("pointerdown", (event) => {
+  const handle = event.target.closest("[data-drag-handle]");
+  if (!handle) return;
+  const row = handle.closest("[data-plan-row]");
+  if (!row) return;
+  const [templateId, itemId] = row.dataset.planRow.split(":");
+  const rect = row.getBoundingClientRect();
+  const ghost = row.cloneNode(true);
+  ghost.classList.add("drag-ghost");
+  ghost.style.left = `${rect.left}px`;
+  ghost.style.top = `${rect.top}px`;
+  ghost.style.width = `${rect.width}px`;
+  document.body.appendChild(ghost);
+  row.classList.add("drag-source");
+  pointerPlanDrag = {
+    pointerId: event.pointerId,
+    templateId,
+    itemId,
+    sourceRow: row,
+    ghost,
+    offsetY: event.clientY - rect.top,
+    targetId: null,
+    after: false,
+  };
+  handle.setPointerCapture(event.pointerId);
+  event.preventDefault();
+});
+
+$("#templateList").addEventListener("pointermove", (event) => {
+  const drag = pointerPlanDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  if (drag.ghost) drag.ghost.style.top = `${event.clientY - drag.offsetY}px`;
+  clearPlanDropMarkers();
+  const rows = [...document.querySelectorAll(`[data-plan-row^="${drag.templateId}:"]`)].filter((row) => row.dataset.planRow !== `${drag.templateId}:${drag.itemId}`);
+  const target = rows.find((row) => {
+    const rect = row.getBoundingClientRect();
+    return event.clientY >= rect.top && event.clientY <= rect.bottom;
+  });
+  if (target) {
+    const rect = target.getBoundingClientRect();
+    drag.targetId = target.dataset.planRow.split(":")[1];
+    drag.after = event.clientY > rect.top + rect.height / 2;
+    target.classList.add(drag.after ? "drop-after" : "drop-before");
+  }
+  event.preventDefault();
+});
+
+$("#templateList").addEventListener("pointerup", (event) => {
+  if (!pointerPlanDrag || pointerPlanDrag.pointerId !== event.pointerId) return;
+  finishPointerPlanDrag(true);
+});
+
+$("#templateList").addEventListener("pointercancel", (event) => {
+  if (!pointerPlanDrag || pointerPlanDrag.pointerId !== event.pointerId) return;
+  finishPointerPlanDrag(false);
+});
+
+$("#templateList").addEventListener("dragend", (event) => {
+  const row = event.target.closest("[data-plan-row]");
+  if (row) row.classList.remove("dragging");
+  draggedPlanRow = null;
+});
+
+$("#templateList").addEventListener("dragover", (event) => {
+  if (!draggedPlanRow) return;
+  const row = event.target.closest("[data-plan-row]");
+  if (!row || row.dataset.planRow === draggedPlanRow) return;
+  const [sourceTemplateId] = draggedPlanRow.split(":");
+  const [targetTemplateId] = row.dataset.planRow.split(":");
+  if (sourceTemplateId !== targetTemplateId) return;
+  event.preventDefault();
+});
+
+$("#templateList").addEventListener("drop", (event) => {
+  if (!draggedPlanRow) return;
+  const targetRow = event.target.closest("[data-plan-row]");
+  if (!targetRow || targetRow.dataset.planRow === draggedPlanRow) return;
+  const [sourceTemplateId, sourceItemId] = draggedPlanRow.split(":");
+  const [targetTemplateId, targetItemId] = targetRow.dataset.planRow.split(":");
+  if (sourceTemplateId !== targetTemplateId) return;
+  const template = templateById(sourceTemplateId);
+  if (!template) return;
+  const sourceIndex = template.items.findIndex((item) => item.id === sourceItemId);
+  const targetIndex = template.items.findIndex((item) => item.id === targetItemId);
+  if (sourceIndex < 0 || targetIndex < 0) return;
+  const [item] = template.items.splice(sourceIndex, 1);
+  template.items.splice(targetIndex, 0, item);
+  draggedPlanRow = null;
+  saveState();
+  renderBuilder();
 });
 
 $("#trackingModes").addEventListener("click", (event) => {
@@ -2832,7 +3372,12 @@ $("#trackingPanel").addEventListener("submit", (event) => {
     const index = state.health.findIndex((item) => item.id === editId);
     if (index >= 0) state.health[index] = { ...state.health[index], ...payload };
   } else {
-    state.health.unshift({ id: id(), profileId: state.activeProfileId, date: todayKey, ...payload });
+    const existing = state.health.find((item) => item.profileId === state.activeProfileId && item.date === payload.date);
+    if (existing) {
+      Object.assign(existing, payload);
+    } else {
+      state.health.unshift({ id: id(), profileId: state.activeProfileId, ...payload });
+    }
   }
   event.target.reset();
   saveState();
@@ -2852,16 +3397,62 @@ $("#trackingPanel").addEventListener("click", (event) => {
     return;
   }
 
+  const healthOptions = event.target.closest("[data-health-options]");
+  if (healthOptions) {
+    activeHealthOptionsId = healthOptions.dataset.healthOptions;
+    const item = state.health.find((candidate) => candidate.profileId === state.activeProfileId && candidate.id === activeHealthOptionsId);
+    $("#healthActionsTitle").textContent = item ? `Mesures ${item.date}` : "Mesures";
+    $("#healthActionsDialog").showModal();
+    return;
+  }
+
   const edit = event.target.closest("[data-edit-health]");
+  const remove = event.target.closest("[data-delete-health]");
+  if (remove) {
+    const item = state.health.find((candidate) => candidate.profileId === state.activeProfileId && candidate.id === remove.dataset.deleteHealth);
+    if (!item) return;
+    if (!confirm(`Supprimer les mesures du ${item.date} ?`)) return;
+    state.health = state.health.filter((candidate) => candidate.id !== item.id);
+    saveState();
+    renderTracking();
+    return;
+  }
   if (!edit) return;
   const item = state.health.find((candidate) => candidate.profileId === state.activeProfileId && candidate.id === edit.dataset.editHealth);
   if (!item) return;
   fillHealthForm(item);
 });
 
+$("#healthActionEdit").addEventListener("click", () => {
+  const item = state.health.find((candidate) => candidate.profileId === state.activeProfileId && candidate.id === activeHealthOptionsId);
+  $("#healthActionsDialog").close();
+  if (!item) return;
+  fillHealthForm(item);
+});
+
+$("#healthActionDelete").addEventListener("click", () => {
+  const item = state.health.find((candidate) => candidate.profileId === state.activeProfileId && candidate.id === activeHealthOptionsId);
+  $("#healthActionsDialog").close();
+  if (!item) return;
+  if (!confirm(`Supprimer les mesures du ${item.date} ?`)) return;
+  state.health = state.health.filter((candidate) => candidate.id !== item.id);
+  activeHealthOptionsId = null;
+  saveState();
+  renderTracking();
+});
+
 $("#trackingPanel").addEventListener("change", (event) => {
   if (!event.target.closest("#profileBirthDatePicker")) return;
   $("#profileBirthDateText").value = birthDateToDisplay(event.target.value);
+});
+
+$("#trackingPanel").addEventListener("input", (event) => {
+  if (!event.target.closest("#profileBirthDateText")) return;
+  const input = event.target;
+  input.value = formatBirthDateDisplay(input.value);
+  const picker = $("#profileBirthDatePicker");
+  const isoDate = displayToBirthDate(input.value);
+  if (picker && isoDate) picker.value = isoDate;
 });
 
 $("#trackingPanel").addEventListener("click", (event) => {
@@ -2878,6 +3469,7 @@ $("#trackingPanel").addEventListener("click", (event) => {
 
 function healthPayload() {
   return {
+    date: $("#healthDate").value || todayKey,
     weight: $("#healthWeight").value,
     bodyfat: $("#healthBodyfat").value,
     waist: $("#healthWaist").value,
@@ -2896,6 +3488,7 @@ function healthPayload() {
 
 function fillHealthForm(item) {
   $("#healthEditId").value = item.id;
+  $("#healthDate").value = item.date || todayKey;
   $("#healthWeight").value = item.weight || "";
   $("#healthBodyfat").value = item.bodyfat || "";
   $("#healthWaist").value = item.waist || "";

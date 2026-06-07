@@ -20,7 +20,7 @@
           <h1>Training System</h1>
           <p class="active-profile-chip" id="activeProfileName">Profil principal</p>
         </div>
-        <span class="version-badge" id="appVersionBadge">v1.3.0</span>
+        <span class="version-badge" id="appVersionBadge">v1.3.9</span>
         <button class="settings-button" id="openSettings" type="button" title="Options" aria-label="Options">⚙</button>
         <button class="icon-button" id="installButton" type="button" hidden title="Installer">Install</button>
       </header>
@@ -140,6 +140,10 @@
                 </div>
                 <div class="chip-list" id="muscleGroupManager"></div>
               </section>
+              <label class="search-box">
+                Recherche exercice
+                <input id="exerciseLibrarySearch" type="search" placeholder="Squat, tirage, curl..." autocomplete="off">
+              </label>
               <div class="filter-row" id="equipmentFilters"></div>
               <div class="filter-row" id="muscleFilters"></div>
               <div class="stack" id="exerciseLibrary"></div>
@@ -479,6 +483,51 @@
         </label>
         <button class="primary-button" type="submit">Ajouter</button>
         <button class="small-button" value="cancel">Annuler</button>
+      </form>
+    </dialog>
+
+    <dialog id="templateActionsDialog">
+      <form method="dialog" class="dialog-card">
+        <h2 id="templateActionsTitle">Seance</h2>
+        <button class="small-button" id="templateActionEdit" type="button">Modifier</button>
+        <button class="small-button" id="templateActionDuplicate" type="button">Dupliquer</button>
+        <button class="small-button danger" id="templateActionDelete" type="button">Supprimer</button>
+        <button class="small-button" value="cancel">Fermer</button>
+      </form>
+    </dialog>
+
+    <dialog id="planItemActionsDialog">
+      <form method="dialog" class="dialog-card">
+        <h2 id="planItemActionsTitle">Exercice</h2>
+        <button class="small-button" id="planItemActionEdit" type="button">Modifier</button>
+        <button class="small-button danger" id="planItemActionDelete" type="button">Supprimer</button>
+        <button class="small-button" value="cancel">Fermer</button>
+      </form>
+    </dialog>
+
+    <dialog id="healthActionsDialog">
+      <form method="dialog" class="dialog-card">
+        <h2 id="healthActionsTitle">Mesures</h2>
+        <button class="small-button" id="healthActionEdit" type="button">Modifier</button>
+        <button class="small-button danger" id="healthActionDelete" type="button">Supprimer</button>
+        <button class="small-button" value="cancel">Fermer</button>
+      </form>
+    </dialog>
+
+    <dialog id="scheduleActionsDialog">
+      <form method="dialog" class="dialog-card">
+        <h2 id="scheduleActionsTitle">Planning</h2>
+        <button class="small-button danger" id="scheduleActionDelete" type="button">Supprimer</button>
+        <button class="small-button" value="cancel">Fermer</button>
+      </form>
+    </dialog>
+
+    <dialog id="muscleGroupActionsDialog">
+      <form method="dialog" class="dialog-card">
+        <h2 id="muscleGroupActionsTitle">Groupe musculaire</h2>
+        <button class="small-button" id="muscleGroupActionRename" type="button">Renommer</button>
+        <button class="small-button danger" id="muscleGroupActionDelete" type="button">Supprimer</button>
+        <button class="small-button" value="cancel">Fermer</button>
       </form>
     </dialog>
 
