@@ -20,7 +20,7 @@
           <h1>Training System</h1>
           <p class="active-profile-chip" id="activeProfileName">Profil principal</p>
         </div>
-        <span class="version-badge" id="appVersionBadge">v1.3.9</span>
+        <span class="version-badge" id="appVersionBadge">v1.4.1</span>
         <button class="settings-button" id="openSettings" type="button" title="Options" aria-label="Options">⚙</button>
         <button class="icon-button" id="installButton" type="button" hidden title="Installer">Install</button>
       </header>
@@ -528,6 +528,22 @@
         <button class="small-button" id="muscleGroupActionRename" type="button">Renommer</button>
         <button class="small-button danger" id="muscleGroupActionDelete" type="button">Supprimer</button>
         <button class="small-button" value="cancel">Fermer</button>
+      </form>
+    </dialog>
+
+    <dialog id="appMessageDialog">
+      <form method="dialog" class="dialog-card app-message-card">
+        <p class="label" id="appMessageLabel">AERSTRONG</p>
+        <h2 id="appMessageTitle">Confirmation</h2>
+        <p class="muted-text" id="appMessageText"></p>
+        <label id="appMessageInputWrap" hidden>
+          <span id="appMessageInputLabel">Valeur</span>
+          <input id="appMessageInput">
+        </label>
+        <div class="dialog-actions">
+          <button class="small-button" id="appMessageCancel" value="cancel" type="button">Annuler</button>
+          <button class="primary-button" id="appMessageConfirm" type="button">Confirmer</button>
+        </div>
       </form>
     </dialog>
 

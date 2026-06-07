@@ -1,5 +1,5 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.3.9";
+const appVersion = "v1.4.1";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -36,6 +36,7 @@ let activeHealthOptionsId = null;
 let activeScheduleOptionsId = null;
 let activeMuscleGroupOptions = "";
 let libraryExerciseSearch = "";
+let appMessageConfirmHandler = null;
 
 const sessionUi = {
   phase: "ready",
@@ -438,11 +439,14 @@ function deleteTemplate(templateId) {
   const usedInSchedule = state.schedule.some((item) => item.templateId === templateId);
   const usedInLogs = state.logs.some((log) => log.templateId === templateId);
   const detail = usedInSchedule || usedInLogs ? " Cette action supprimera aussi son planning et son historique associe." : "";
-  if (!confirm(`Supprimer la seance "${template.name}" ?${detail}`)) return;
-  state.templates = state.templates.filter((item) => item.id !== templateId);
-  state.schedule = state.schedule.filter((item) => item.templateId !== templateId);
-  state.logs = state.logs.filter((log) => log.templateId !== templateId);
-  expandedTemplateIds.delete(templateId);
+  showAppConfirm(`Supprimer la seance "${template.name}" ?${detail}`, () => {
+    state.templates = state.templates.filter((item) => item.id !== templateId);
+    state.schedule = state.schedule.filter((item) => item.templateId !== templateId);
+    state.logs = state.logs.filter((log) => log.templateId !== templateId);
+    expandedTemplateIds.delete(templateId);
+    saveState();
+    render();
+  }, "Supprimer la seance", true, "Supprimer");
 }
 
 function createPplTemplates() {
@@ -856,6 +860,41 @@ function displayToBirthDate(value) {
   return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
 }
 
+function showAppMessage({ title = "AERSTRONG", message = "", confirmLabel = "OK", cancelLabel = "Annuler", danger = false, input = false, inputLabel = "Valeur", inputValue = "", onConfirm = null }) {
+  const dialog = $("#appMessageDialog");
+  if (!dialog) return;
+  $("#appMessageTitle").textContent = title;
+  $("#appMessageText").textContent = message;
+  $("#appMessageConfirm").textContent = confirmLabel;
+  $("#appMessageCancel").textContent = cancelLabel;
+  $("#appMessageCancel").hidden = !cancelLabel;
+  $("#appMessageConfirm").classList.toggle("danger-action", !!danger);
+  const inputWrap = $("#appMessageInputWrap");
+  const inputField = $("#appMessageInput");
+  inputWrap.hidden = !input;
+  inputField.value = input ? inputValue : "";
+  $("#appMessageInputLabel").textContent = inputLabel;
+  appMessageConfirmHandler = () => {
+    const value = input ? inputField.value : true;
+    dialog.close();
+    if (onConfirm) onConfirm(value);
+  };
+  if (dialog.showModal && !dialog.open) dialog.showModal();
+  if (input) setTimeout(() => inputField.focus(), 50);
+}
+
+function showAppNotice(message, title = "AERSTRONG") {
+  showAppMessage({ title, message, confirmLabel: "Compris", cancelLabel: "", onConfirm: null });
+}
+
+function showAppConfirm(message, onConfirm, title = "Confirmation", danger = false, confirmLabel = "Confirmer") {
+  showAppMessage({ title, message, confirmLabel, danger, onConfirm });
+}
+
+function showAppPrompt(message, initialValue, onConfirm, title = "AERSTRONG") {
+  showAppMessage({ title, message, confirmLabel: "Valider", input: true, inputLabel: message, inputValue: initialValue || "", onConfirm });
+}
+
 function normalizeSearch(value) {
   return String(value || "")
     .normalize("NFD")
@@ -1031,29 +1070,36 @@ function renderExerciseFormHelpers() {
 
 function renameMuscleGroup(oldName) {
   if (!oldName) return;
-  const newName = prompt("Nouveau nom du groupe musculaire", oldName);
-  if (!newName || newName.trim() === oldName) return;
-  const cleanName = newName.trim();
-  state.muscleGroups = state.muscleGroups.map((group) => group === oldName ? cleanName : group);
-  state.exercises.forEach((exerciseItem) => {
-    if (exerciseItem.family === oldName) exerciseItem.family = cleanName;
-  });
-  if (muscleFilter === oldName) muscleFilter = cleanName;
-  saveState();
-  render();
+  showAppPrompt("Nouveau nom du groupe musculaire", oldName, (newName) => {
+    if (!newName || !newName.trim() || newName.trim() === oldName) return;
+    const cleanName = newName.trim();
+    state.muscleGroups = state.muscleGroups.map((group) => group === oldName ? cleanName : group);
+    state.exercises.forEach((exerciseItem) => {
+      if (exerciseItem.family === oldName) exerciseItem.family = cleanName;
+    });
+    if (muscleFilter === oldName) muscleFilter = cleanName;
+    saveState();
+    render();
+  }, "Renommer le groupe");
 }
 
 function deleteMuscleGroup(group) {
   if (!group) return;
   const used = state.exercises.some((exerciseItem) => exerciseItem.family === group);
-  if (used && !confirm(`Le groupe "${group}" contient des exercices. Les passer dans "Autre" ?`)) return;
-  state.exercises.forEach((exerciseItem) => {
-    if (exerciseItem.family === group) exerciseItem.family = "Autre";
-  });
-  state.muscleGroups = state.muscleGroups.filter((item) => item !== group);
-  if (muscleFilter === group) muscleFilter = "Tous";
-  saveState();
-  render();
+  const runDelete = () => {
+    state.exercises.forEach((exerciseItem) => {
+      if (exerciseItem.family === group) exerciseItem.family = "Autre";
+    });
+    state.muscleGroups = state.muscleGroups.filter((item) => item !== group);
+    if (muscleFilter === group) muscleFilter = "Tous";
+    saveState();
+    render();
+  };
+  if (used) {
+    showAppConfirm(`Le groupe "${group}" contient des exercices. Les passer dans "Autre" ?`, runDelete, "Supprimer le groupe", true, "Supprimer");
+    return;
+  }
+  runDelete();
 }
 
 function editExercise(exerciseItem) {
@@ -2588,10 +2634,15 @@ $("#exerciseForm").addEventListener("submit", (event) => {
   if (editingExerciseId) {
     const current = exerciseById(editingExerciseId);
     if (!current) return;
-    if (!confirm(`Modifier "${current.name}" ? Les seances qui utilisent cet exercice seront conservees avec ces nouvelles informations.`)) return;
-    const oldName = current.name;
-    Object.assign(current, payload);
-    if (oldName !== payload.name) applyExerciseRename(oldName, payload.name);
+    showAppConfirm(`Modifier "${current.name}" ? Les seances qui utilisent cet exercice seront conservees avec ces nouvelles informations.`, () => {
+      const oldName = current.name;
+      Object.assign(current, payload);
+      if (oldName !== payload.name) applyExerciseRename(oldName, payload.name);
+      resetExerciseForm();
+      saveState();
+      render();
+    }, "Modifier l'exercice", false, "Modifier");
+    return;
   } else {
     state.exercises.push(exercise(id(), payload.name, payload.family, payload.equipment, payload.rest, payload.alternatives));
   }
@@ -2602,15 +2653,16 @@ $("#exerciseForm").addEventListener("submit", (event) => {
 
 $("#exerciseFamily").addEventListener("change", () => {
   if ($("#exerciseFamily").value !== "Autre") return;
-  const newGroup = prompt("Nom du nouveau groupe musculaire");
-  if (!newGroup || !newGroup.trim()) {
-    $("#exerciseFamily").value = "Dos";
-    return;
-  }
-  const cleanGroup = newGroup.trim();
-  if (!state.muscleGroups.includes(cleanGroup)) state.muscleGroups.push(cleanGroup);
-  renderExerciseFormHelpers();
-  $("#exerciseFamily").value = cleanGroup;
+  showAppPrompt("Nom du nouveau groupe musculaire", "", (newGroup) => {
+    if (!newGroup || !newGroup.trim()) {
+      $("#exerciseFamily").value = "Dos";
+      return;
+    }
+    const cleanGroup = newGroup.trim();
+    if (!state.muscleGroups.includes(cleanGroup)) state.muscleGroups.push(cleanGroup);
+    renderExerciseFormHelpers();
+    $("#exerciseFamily").value = cleanGroup;
+  }, "Nouveau groupe");
 });
 
 $("#exerciseAlternativePick").addEventListener("change", () => {
@@ -2658,6 +2710,20 @@ $("#muscleGroupActionRename").addEventListener("click", () => {
 $("#muscleGroupActionDelete").addEventListener("click", () => {
   $("#muscleGroupActionsDialog").close();
   deleteMuscleGroup(activeMuscleGroupOptions);
+});
+
+$("#appMessageConfirm").addEventListener("click", () => {
+  if (appMessageConfirmHandler) appMessageConfirmHandler();
+});
+
+$("#appMessageCancel").addEventListener("click", () => {
+  const dialog = $("#appMessageDialog");
+  if (dialog && dialog.open) dialog.close();
+  appMessageConfirmHandler = null;
+});
+
+$("#appMessageDialog").addEventListener("close", () => {
+  appMessageConfirmHandler = null;
 });
 
 $("#settingsForm").addEventListener("submit", (event) => {
@@ -2872,7 +2938,7 @@ $("#templateList").addEventListener("submit", (event) => {
   event.preventDefault();
   const data = new FormData(form);
   if (!data.get("exerciseId")) {
-    alert("Aucun exercice selectionne.");
+    showAppNotice("Aucun exercice selectionne.", "Ajouter un exercice");
     return;
   }
   const rest = Number(data.get("restMinutes") || 0) * 60 + Number(data.get("restSeconds") || 0);
@@ -3028,8 +3094,6 @@ $("#templateActionDelete").addEventListener("click", () => {
   if (!activeTemplateOptionsId) return;
   $("#templateActionsDialog").close();
   deleteTemplate(activeTemplateOptionsId);
-  saveState();
-  render();
 });
 
 $("#planItemActionEdit").addEventListener("click", () => {
@@ -3057,11 +3121,12 @@ $("#planItemActionDelete").addEventListener("click", () => {
   if (!template) return;
   const item = template.items.find((candidate) => candidate.id === activePlanItemOptions.itemId);
   const exercise = item && exerciseById(item.exerciseId);
-  if (!confirm(`Supprimer "${(exercise && exercise.name) || "cet exercice"}" de la seance ?`)) return;
   $("#planItemActionsDialog").close();
-  template.items = template.items.filter((item) => item.id !== activePlanItemOptions.itemId);
-  saveState();
-  render();
+  showAppConfirm(`Supprimer "${(exercise && exercise.name) || "cet exercice"}" de la seance ?`, () => {
+    template.items = template.items.filter((item) => item.id !== activePlanItemOptions.itemId);
+    saveState();
+    render();
+  }, "Supprimer l'exercice", true, "Supprimer");
 });
 
 $("#editPlanItemForm").addEventListener("submit", (event) => {
@@ -3135,16 +3200,15 @@ $("#deleteExerciseOption").addEventListener("click", () => {
   if (!exerciseItem) return;
   $("#exerciseOptionsDialog").close();
   const warning = `Attention : supprimer "${exerciseItem.name}" l'enlevera aussi des seances existantes et supprimera les stats enregistrees dessus. Continuer ?`;
-  if (!confirm(warning)) return;
-  pendingDeleteExerciseId = exerciseItem.id;
-  if (!confirm(`Confirmer definitivement la suppression de "${exerciseItem.name}" ?`)) {
-    pendingDeleteExerciseId = null;
-    return;
-  }
-  removeExerciseEverywhere(pendingDeleteExerciseId);
-  pendingDeleteExerciseId = null;
-  saveState();
-  render();
+  showAppConfirm(warning, () => {
+    pendingDeleteExerciseId = exerciseItem.id;
+    showAppConfirm(`Confirmer definitivement la suppression de "${exerciseItem.name}" ?`, () => {
+      removeExerciseEverywhere(pendingDeleteExerciseId);
+      pendingDeleteExerciseId = null;
+      saveState();
+      render();
+    }, "Confirmation definitive", true, "Supprimer");
+  }, "Supprimer l'exercice", true, "Continuer");
 });
 
 $("#addExerciseToTemplateForm").addEventListener("submit", (event) => {
@@ -3411,10 +3475,11 @@ $("#trackingPanel").addEventListener("click", (event) => {
   if (remove) {
     const item = state.health.find((candidate) => candidate.profileId === state.activeProfileId && candidate.id === remove.dataset.deleteHealth);
     if (!item) return;
-    if (!confirm(`Supprimer les mesures du ${item.date} ?`)) return;
-    state.health = state.health.filter((candidate) => candidate.id !== item.id);
-    saveState();
-    renderTracking();
+    showAppConfirm(`Supprimer les mesures du ${item.date} ?`, () => {
+      state.health = state.health.filter((candidate) => candidate.id !== item.id);
+      saveState();
+      renderTracking();
+    }, "Supprimer les mesures", true, "Supprimer");
     return;
   }
   if (!edit) return;
@@ -3434,11 +3499,12 @@ $("#healthActionDelete").addEventListener("click", () => {
   const item = state.health.find((candidate) => candidate.profileId === state.activeProfileId && candidate.id === activeHealthOptionsId);
   $("#healthActionsDialog").close();
   if (!item) return;
-  if (!confirm(`Supprimer les mesures du ${item.date} ?`)) return;
-  state.health = state.health.filter((candidate) => candidate.id !== item.id);
-  activeHealthOptionsId = null;
-  saveState();
-  renderTracking();
+  showAppConfirm(`Supprimer les mesures du ${item.date} ?`, () => {
+    state.health = state.health.filter((candidate) => candidate.id !== item.id);
+    activeHealthOptionsId = null;
+    saveState();
+    renderTracking();
+  }, "Supprimer les mesures", true, "Supprimer");
 });
 
 $("#trackingPanel").addEventListener("change", (event) => {
