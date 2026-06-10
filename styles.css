@@ -23,6 +23,29 @@
   display: none !important;
 }
 
+body,
+button,
+.app-shell,
+.brand,
+.logo,
+img {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input,
+textarea,
+select {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+img {
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
 :root[data-theme="red"] {
   --red: #e50914;
   --red-2: #ff3340;
@@ -821,6 +844,55 @@ main {
   color: var(--muted);
 }
 
+.exercise-session-menu {
+  display: grid;
+  gap: 8px;
+}
+
+.exercise-session-menu button {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 54px;
+  padding: 10px;
+  color: var(--ink);
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.exercise-session-menu span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: var(--muted);
+  background: var(--panel-2);
+  border-radius: 999px;
+  font-weight: 950;
+}
+
+.exercise-session-menu strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.exercise-session-menu button.active {
+  border-color: var(--red);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.16);
+}
+
+.exercise-session-menu button.done {
+  border-color: var(--success);
+}
+
+.exercise-session-menu button.done span {
+  color: white;
+  background: var(--success);
+}
+
 .set-status-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -928,6 +1000,10 @@ main {
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 14px;
+}
+
+.weight-input {
+  color: var(--red-2);
 }
 
 .go-button {

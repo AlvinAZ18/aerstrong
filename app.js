@@ -1,5 +1,5 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.4.1";
+const appVersion = "v1.5.1";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -37,6 +37,9 @@ let activeScheduleOptionsId = null;
 let activeMuscleGroupOptions = "";
 let libraryExerciseSearch = "";
 let appMessageConfirmHandler = null;
+let wakeLock = null;
+let previewSettings = null;
+let activeWorkoutLogOptionsId = null;
 
 const sessionUi = {
   phase: "ready",
@@ -566,6 +569,11 @@ function applySettings() {
   document.documentElement.dataset.mode = (state.settings && state.settings.mode) || "dark";
 }
 
+function applySettingsPreview(theme, mode) {
+  document.documentElement.dataset.theme = theme || "gold";
+  document.documentElement.dataset.mode = mode || "dark";
+}
+
 function soundButtonHtml() {
   const muted = state.settings && state.settings.soundMuted;
   return `
@@ -589,22 +597,42 @@ function playTimerBeep(kind) {
   if (!context) return;
   const oscillator = context.createOscillator();
   const gain = context.createGain();
+  const compressor = context.createDynamicsCompressor();
   const final = kind === "done";
   const now = context.currentTime;
-  oscillator.type = "sine";
-  oscillator.frequency.setValueAtTime(final ? 1120 : 760, now);
+  oscillator.type = final ? "square" : "triangle";
+  oscillator.frequency.setValueAtTime(final ? 1480 : 980, now);
   gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(final ? 0.22 : 0.11, now + 0.015);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + (final ? 0.32 : 0.12));
+  gain.gain.exponentialRampToValueAtTime(final ? 0.75 : 0.42, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + (final ? 0.42 : 0.18));
   oscillator.connect(gain);
-  gain.connect(context.destination);
+  gain.connect(compressor);
+  compressor.connect(context.destination);
   oscillator.start(now);
-  oscillator.stop(now + (final ? 0.34 : 0.14));
+  oscillator.stop(now + (final ? 0.44 : 0.2));
 }
 
 function handleTimerSound(remaining) {
   if (remaining > 0 && remaining <= 3) playTimerBeep("tick");
   if (remaining === 0) playTimerBeep("done");
+}
+
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator) || wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+    });
+  } catch {
+    wakeLock = null;
+  }
+}
+
+function releaseWakeLock() {
+  if (!wakeLock) return;
+  wakeLock.release();
+  wakeLock = null;
 }
 
 function activeProfile() {
@@ -687,15 +715,22 @@ function templateById(templateId) {
 
 function scheduledFor(dateKey) {
   const schedule = profileSchedule();
-  const exact = schedule.filter((item) => item.date === dateKey);
+  const exact = schedule.filter((item) => item.date === dateKey).map((item) => ({ ...item, scheduleKey: `${item.id}:${dateKey}` }));
   const repeated = schedule.filter((item) => {
     if (!item.repeatWeekly || item.date === dateKey) return false;
     const start = new Date(`${item.date}T12:00:00`);
     const current = new Date(`${dateKey}T12:00:00`);
     const days = Math.round((current - start) / 86400000);
     return days > 0 && days % 7 === 0;
-  });
+  }).map((item) => ({ ...item, scheduleKey: `${item.id}:${dateKey}` }));
   return [...exact, ...repeated];
+}
+
+function isScheduleDone(item, dateKey, profileId = state.activeProfileId) {
+  const scheduleKey = item && (item.scheduleKey || `${item.id}:${dateKey}`);
+  return state.logs.some((log) => log.profileId === profileId && log.date === dateKey && log.finishedAt && !log.archived && (
+    log.scheduleKey ? log.scheduleKey === scheduleKey : log.templateId === item.templateId
+  ));
 }
 
 function isTemplateDoneOnDate(templateId, dateKey, profileId = state.activeProfileId) {
@@ -703,11 +738,15 @@ function isTemplateDoneOnDate(templateId, dateKey, profileId = state.activeProfi
 }
 
 function pendingScheduledFor(dateKey) {
-  return scheduledFor(dateKey).filter((item) => !isTemplateDoneOnDate(item.templateId, dateKey));
+  return scheduledFor(dateKey).filter((item) => !isScheduleDone(item, dateKey));
+}
+
+function currentScheduledItem() {
+  return pendingScheduledFor(todayKey)[0] || null;
 }
 
 function currentTemplate() {
-  const planned = pendingScheduledFor(todayKey)[0];
+  const planned = currentScheduledItem();
   return planned ? templateById(planned.templateId) : null;
 }
 
@@ -724,16 +763,21 @@ function currentTemplateForProfile(profileId) {
   return template;
 }
 
-function currentLog(templateId) {
+function currentLog(templateId, scheduledItem = currentScheduledItem()) {
   const template = templateId ? templateById(templateId) : currentTemplate();
   const resolvedTemplateId = template ? template.id : undefined;
-  let log = state.logs.find((item) => item.profileId === state.activeProfileId && item.date === todayKey && item.templateId === resolvedTemplateId && !item.archived && !item.finishedAt);
+  const scheduleKey = scheduledItem && (scheduledItem.scheduleKey || `${scheduledItem.id}:${todayKey}`);
+  let log = state.logs.find((item) => item.profileId === state.activeProfileId && item.date === todayKey && item.templateId === resolvedTemplateId && !item.archived && !item.finishedAt && (
+    scheduleKey ? item.scheduleKey === scheduleKey : !item.scheduleKey
+  ));
   if (!log) {
     log = {
       id: id(),
       profileId: state.activeProfileId,
       date: todayKey,
       templateId: resolvedTemplateId,
+      scheduleId: scheduledItem && scheduledItem.id,
+      scheduleKey,
       entries: [],
       currentExerciseIndex: 0,
       currentSetIndex: 0,
@@ -746,14 +790,19 @@ function currentLog(templateId) {
   return log;
 }
 
-function currentLogForProfile(profileId, templateId) {
-  let log = state.logs.find((item) => item.profileId === profileId && item.date === todayKey && item.templateId === templateId && !item.archived && !item.finishedAt);
+function currentLogForProfile(profileId, templateId, scheduledItem = currentScheduledItem()) {
+  const scheduleKey = scheduledItem && (scheduledItem.scheduleKey || `${scheduledItem.id}:${todayKey}`);
+  let log = state.logs.find((item) => item.profileId === profileId && item.date === todayKey && item.templateId === templateId && !item.archived && !item.finishedAt && (
+    scheduleKey ? item.scheduleKey === scheduleKey : !item.scheduleKey
+  ));
   if (!log) {
     log = {
       id: id(),
       profileId,
       date: todayKey,
       templateId,
+      scheduleId: scheduledItem && scheduledItem.id,
+      scheduleKey,
       entries: [],
       currentExerciseIndex: 0,
       currentSetIndex: 0,
@@ -791,6 +840,35 @@ function currentPlanItem(log) {
   return template && template.items ? template.items[log.currentExerciseIndex] : undefined;
 }
 
+function persistActiveTrainingInputs() {
+  const scheduledItem = currentScheduledItem();
+  const template = scheduledItem ? templateById(scheduledItem.templateId) : currentTemplate();
+  if (!template) return;
+  const log = currentLog(template.id, scheduledItem);
+  const item = currentPlanItem(log);
+  if (!item) return;
+  const entry = entryFor(log, item);
+  const setIndex = Math.min(log.currentSetIndex, item.sets - 1);
+  const repsInput = $("#activeRepInput");
+  const weightInput = $("#activeWeightInput");
+  if (repsInput) entry.reps[setIndex] = repsInput.value;
+  if (weightInput && weightInput.value !== "") {
+    const weight = Number(String(weightInput.value).replace(",", "."));
+    if (Number.isFinite(weight)) {
+      entry.weight = weight;
+      item.weight = weight;
+    }
+  }
+}
+
+function propagateFutureSetValues(entry, setIndex, reps, weight) {
+  for (let index = setIndex + 1; index < entry.reps.length; index += 1) {
+    if (entry.completed && entry.completed[index]) continue;
+    entry.reps[index] = reps;
+  }
+  if (Number.isFinite(weight)) entry.weight = weight;
+}
+
 function profileNameById(profileId) {
   const profile = state.profiles.find((item) => item.id === profileId);
   return (profile && profile.name) || "Profil";
@@ -803,6 +881,26 @@ function isLogComplete(log) {
     const entry = log.entries.find((candidate) => candidate.planItemId === item.id);
     return entry && entry.completed && entry.completed.every(Boolean);
   });
+}
+
+function firstIncompleteExerciseIndex(log) {
+  const template = templateById(log.templateId);
+  if (!template || !template.items) return -1;
+  return template.items.findIndex((item) => {
+    const entry = log.entries.find((candidate) => candidate.planItemId === item.id);
+    return !entry || !entry.completed || entry.completed.some((done) => !done);
+  });
+}
+
+function moveLogToNextIncomplete(log) {
+  const nextIndex = firstIncompleteExerciseIndex(log);
+  if (nextIndex < 0) return false;
+  log.currentExerciseIndex = nextIndex;
+  const item = currentPlanItem(log);
+  const entry = item && entryFor(log, item);
+  const nextSet = entry ? entry.completed.findIndex((done) => !done) : -1;
+  log.currentSetIndex = nextSet >= 0 ? nextSet : 0;
+  return true;
 }
 
 function completedSetCount(log) {
@@ -996,7 +1094,7 @@ function allMuscleGroups() {
 function groupedExercises(exercises) {
   return allMuscleGroups()
     .filter((group) => group !== "Autre")
-    .map((group) => ({ group, items: exercises.filter((exerciseItem) => exerciseItem.family === group) }))
+    .map((group) => ({ group, items: exercises.filter((exerciseItem) => exerciseItem.family === group).sort((a, b) => a.name.localeCompare(b.name, "fr")) }))
     .filter((section) => section.items.length);
 }
 
@@ -1172,8 +1270,11 @@ function daysSince(dateValue) {
 }
 
 function scheduleStatus(item, dateKey) {
-  const active = state.logs.some((log) => log.profileId === state.activeProfileId && log.date === dateKey && log.templateId === item.templateId && !log.archived && !log.finishedAt);
-  const done = isTemplateDoneOnDate(item.templateId, dateKey);
+  const scheduleKey = item.scheduleKey || `${item.id}:${dateKey}`;
+  const active = state.logs.some((log) => log.profileId === state.activeProfileId && log.date === dateKey && log.templateId === item.templateId && !log.archived && !log.finishedAt && (
+    log.scheduleKey ? log.scheduleKey === scheduleKey : true
+  ));
+  const done = isScheduleDone(item, dateKey);
   if (done) return "faite";
   if (active) return "en cours";
   return "prevue";
@@ -1189,7 +1290,7 @@ function renderTodayDashboard() {
   if (!panel) return;
   const template = todayTemplate();
   const plannedToday = scheduledFor(todayKey);
-  if (!template && plannedToday.length && plannedToday.every((item) => isTemplateDoneOnDate(item.templateId, todayKey))) {
+  if (!template && plannedToday.length && plannedToday.every((item) => isScheduleDone(item, todayKey))) {
     const doneNames = plannedToday.map((item) => templateById(item.templateId)).filter(Boolean).map((item) => item.name).join(" / ");
     panel.innerHTML = `
       <article class="today-card empty-plan validated-plan">
@@ -1221,7 +1322,8 @@ function renderTodayDashboard() {
   const minutes = estimatedTemplateMinutes(template);
   const exerciseNames = template.items.slice(0, 3).map((item) => escapeHtml((exerciseById(item.exerciseId) && exerciseById(item.exerciseId).name) || "Exercice"));
   const more = template.items.length > 3 ? ` +${template.items.length - 3}` : "";
-  const activeLog = state.logs.find((item) => item.profileId === state.activeProfileId && item.date === todayKey && item.templateId === template.id && !item.archived && !item.finishedAt);
+  const activeSchedule = currentScheduledItem();
+  const activeLog = state.logs.find((item) => item.profileId === state.activeProfileId && item.date === todayKey && item.templateId === template.id && !item.archived && !item.finishedAt && (!activeSchedule || item.scheduleKey === activeSchedule.scheduleKey));
 
   panel.innerHTML = `
     <article class="today-card">
@@ -1510,7 +1612,12 @@ function showView(name, options = {}) {
     history.pushState({ view: name }, "", window.location.pathname + window.location.search);
   }
   currentViewName = name;
-  if (name === "training") renderTraining();
+  if (name === "training") {
+    requestWakeLock();
+    renderTraining();
+  } else {
+    releaseWakeLock();
+  }
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -1563,12 +1670,13 @@ function renderTraining() {
     activeSummaryLogId = null;
   }
 
-  const template = currentTemplate();
+  const scheduledItem = currentScheduledItem();
+  const template = scheduledItem ? templateById(scheduledItem.templateId) : null;
   if (!template) {
     $("#trainingScreen").innerHTML = `<p class="empty">Aucune seance active. Planifie une seance dans Builder ou reviens demain.</p>`;
     return;
   }
-  const log = currentLog(template.id);
+  const log = currentLog(template.id, scheduledItem);
 
   if (log.finishedAt && completedSetCount(log) > 0) {
     renderSessionSummary(log);
@@ -1608,6 +1716,20 @@ function renderTraining() {
       </div>
     </section>
 
+    <section class="exercise-session-menu">
+      ${template.items.map((planItemEntry, index) => {
+        const planExercise = exerciseById(planItemEntry.exerciseId);
+        const planEntry = log.entries.find((candidate) => candidate.planItemId === planItemEntry.id);
+        const done = planEntry && planEntry.completed && planEntry.completed.every(Boolean);
+        return `
+          <button class="${index === log.currentExerciseIndex ? "active" : ""} ${done ? "done" : ""}" data-session-exercise="${index}" type="button">
+            <span>${index + 1}</span>
+            <strong>${escapeHtml((planEntry && planEntry.performedExerciseName) || (planExercise && planExercise.name) || "Exercice")}</strong>
+          </button>
+        `;
+      }).join("")}
+    </section>
+
     <section class="training-hero">
       <div class="training-topline">
         <span>${escapeHtml(template.name)}</span>
@@ -1634,6 +1756,7 @@ function renderTraining() {
         ${sessionUi.phase === "rest" ? `<button class="timer-adjust" data-rest-adjust="5" type="button">+5</button>` : ""}
       </div>
       <input class="rep-input" id="activeRepInput" inputmode="numeric" type="number" min="0" value="${escapeHtml(entry.reps[setIndex] || target)}" aria-label="Reps realisees">
+      <input class="rep-input weight-input" id="activeWeightInput" inputmode="decimal" type="number" min="0" step="0.5" value="${escapeHtml(entry.weight || item.weight || 0)}" aria-label="Charge utilisee">
       <button class="go-button ${sessionUi.phase === "rest" ? "resting" : ""}" id="goButton" type="button">${sessionUi.phase === "rest" ? t("skip") : "GO"}</button>
     </section>
 
@@ -2007,7 +2130,7 @@ function renderTracking() {
         <label>Mollet G<input id="healthCalfLeft" inputmode="decimal" type="number" step="0.1" value="${escapeHtml(lastHealth.calfLeft || "")}" placeholder="38.5"></label>
         <button class="primary-button align-end" type="submit">Enregistrer</button>
       </form>
-      <div class="stack">${profileHealth().map((item) => renderHealthEntry(item)).join("") || `<p class="empty">Aucune donnee health.</p>`}</div>
+      <div class="stack">${profileHealth().map((item) => renderHealthEntry(item)).join("") || `<p class="empty">Aucune mensuration enregistree.</p>`}</div>
     `;
     renderProfiles();
     return;
@@ -2052,6 +2175,13 @@ function renderTracking() {
           ${performances.map((item) => `<div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.date)} - ${item.weight} kg - ${escapeHtml(item.reps)} reps</span></div>`).join("") || `<p class="empty">Les performances apparaitront apres tes seances.</p>`}
         </div>
       </article>
+      <article class="item-card">
+        <div class="item-head">
+          <strong>Historique des seances</strong>
+          <button class="small-button" id="addPastWorkoutLog" type="button">Ajouter</button>
+        </div>
+        <div class="stack">${renderWorkoutHistory()}</div>
+      </article>
     </section>
   `;
   renderProfiles();
@@ -2070,6 +2200,28 @@ function renderHealthEntry(item) {
     `mollets D/G ${item.calfRight || "-"}/${item.calfLeft || "-"}`,
   ];
   return `<article class="item-card health-entry"><div class="item-head"><strong>${item.date}</strong><button class="icon-mini" data-health-options="${item.id}" type="button" aria-label="Options mesures ${item.date}">...</button></div><p>${parts.join(" - ")}</p></article>`;
+}
+
+function renderWorkoutHistory() {
+  const logs = profileLogs()
+    .filter((log) => log.finishedAt && !log.archived)
+    .sort((a, b) => new Date(b.finishedAt) - new Date(a.finishedAt))
+    .slice(0, 12);
+  return logs.map((log) => {
+    const template = templateById(log.templateId);
+    const stats = logStats(log);
+    return `
+      <article class="item-card workout-history-row">
+        <div class="item-head">
+          <div>
+            <strong>${escapeHtml((template && template.name) || "Seance")}</strong>
+            <p>${escapeHtml(log.date || "")} - ${Math.round(stats.tonnage)} kg - ${stats.calories} kcal</p>
+          </div>
+          <button class="icon-mini" data-workout-log-options="${log.id}" type="button" aria-label="Options seance">...</button>
+        </div>
+      </article>
+    `;
+  }).join("") || `<p class="empty">Aucune seance enregistree.</p>`;
 }
 
 function bestOneRms() {
@@ -2208,25 +2360,32 @@ function clearTogetherTimers() {
 }
 
 function completeCurrentSet() {
-  const template = currentTemplate();
+  const scheduledItem = currentScheduledItem();
+  const template = scheduledItem ? templateById(scheduledItem.templateId) : currentTemplate();
   if (!template) return;
-  const log = currentLog(template.id);
+  const log = currentLog(template.id, scheduledItem);
   const item = currentPlanItem(log);
   if (!item) return;
   const entry = entryFor(log, item);
   const repsInput = $("#activeRepInput");
+  const weightInput = $("#activeWeightInput");
   const reps = Number((repsInput && repsInput.value) || item.targetReps[log.currentSetIndex] || item.minReps);
+  const weight = Number(String((weightInput && weightInput.value) || entry.weight || item.weight || 0).replace(",", "."));
   entry.reps[log.currentSetIndex] = reps;
+  if (Number.isFinite(weight)) {
+    entry.weight = weight;
+    item.weight = weight;
+  }
+  propagateFutureSetValues(entry, log.currentSetIndex, reps, weight);
   entry.completed[log.currentSetIndex] = true;
 
   if (log.currentSetIndex < item.sets - 1) {
     log.currentSetIndex += 1;
     startRest(item.rest || (exerciseById(item.exerciseId) && exerciseById(item.exerciseId).rest) || 120);
   } else {
-    log.currentExerciseIndex += 1;
-    log.currentSetIndex = 0;
+    const moved = moveLogToNextIncomplete(log);
     sessionUi.phase = "ready";
-    if (!currentPlanItem(log)) finishLog(log, null);
+    if (!moved && isLogComplete(log)) finishLog(log, null);
   }
   saveState();
   render();
@@ -2391,6 +2550,18 @@ window.addEventListener("popstate", (event) => {
   showView((event.state && event.state.view) || "home", { push: false });
 });
 
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && currentViewName === "training") requestWakeLock();
+});
+
+document.addEventListener("dragstart", (event) => {
+  if (event.target.closest("img, .logo, .brand")) event.preventDefault();
+});
+
+document.addEventListener("contextmenu", (event) => {
+  if (event.target.closest("img, .brand-mark, .onboarding-logo, .brand")) event.preventDefault();
+});
+
 $("#builderModes").addEventListener("click", (event) => {
   const button = event.target.closest("[data-builder-mode]");
   if (!button) return;
@@ -2408,6 +2579,7 @@ $("#openSettings").addEventListener("click", () => {
   updateVersionLabels();
   updatePwaStatus();
   updateDataStatus();
+  previewSettings = { ...state.settings };
   $("#settingsTheme").value = state.settings.theme;
   $("#settingsMode").value = state.settings.mode || "dark";
   $("#settingsWeightUnit").value = state.settings.weightUnit;
@@ -2488,6 +2660,25 @@ $("#trainingScreen").addEventListener("click", (event) => {
     return;
   }
 
+  const sessionExercise = event.target.closest("[data-session-exercise]");
+  if (sessionExercise) {
+    const template = currentTemplate();
+    if (!template) return;
+    const log = currentLog(template.id);
+    persistActiveTrainingInputs();
+    log.currentExerciseIndex = Number(sessionExercise.dataset.sessionExercise);
+    const nextItem = currentPlanItem(log);
+    const nextEntry = nextItem && entryFor(log, nextItem);
+    const firstOpenSet = nextEntry ? nextEntry.completed.findIndex((done) => !done) : -1;
+    log.currentSetIndex = firstOpenSet >= 0 ? firstOpenSet : 0;
+    log.introSeenIndex = log.currentExerciseIndex;
+    sessionUi.phase = "ready";
+    clearInterval(sessionUi.restTimer);
+    saveState();
+    renderTraining();
+    return;
+  }
+
   if (event.target.closest("[data-finish-together]")) {
     const template = currentTemplate();
     togetherProfileIds.forEach((profileId) => {
@@ -2534,8 +2725,19 @@ $("#trainingScreen").addEventListener("click", (event) => {
     const template = currentTemplate();
     if (!template) return;
     const log = currentLog(template.id);
-    log.currentExerciseIndex += 1;
-    log.currentSetIndex = 0;
+    persistActiveTrainingInputs();
+    const templateItems = template.items || [];
+    const afterCurrent = templateItems.findIndex((item, index) => {
+      if (index <= log.currentExerciseIndex) return false;
+      const entry = log.entries.find((candidate) => candidate.planItemId === item.id);
+      return !entry || !entry.completed || entry.completed.some((done) => !done);
+    });
+    if (afterCurrent >= 0) {
+      log.currentExerciseIndex = afterCurrent;
+      log.currentSetIndex = 0;
+    } else {
+      moveLogToNextIncomplete(log);
+    }
     saveState();
     render();
   }
@@ -2561,6 +2763,20 @@ $("#trainingScreen").addEventListener("click", (event) => {
 });
 
 $("#exitDialog").addEventListener("click", (event) => {
+  const discard = event.target.closest("[data-exit-discard]");
+  if (discard) {
+    const template = currentTemplate();
+    if (!template) return;
+    const log = currentLog(template.id);
+    log.archived = true;
+    log.exitReason = "abandon sans sauvegarde";
+    activeSummaryLogId = null;
+    saveState();
+    $("#exitDialog").close();
+    showView("home");
+    render();
+    return;
+  }
   const button = event.target.closest("[data-exit-reason]");
   if (!button) return;
   const template = currentTemplate();
@@ -2717,6 +2933,7 @@ $("#appMessageConfirm").addEventListener("click", () => {
 });
 
 $("#appMessageCancel").addEventListener("click", () => {
+  if ($("#appMessageCancel").dataset.action === "delete-workout") return;
   const dialog = $("#appMessageDialog");
   if (dialog && dialog.open) dialog.close();
   appMessageConfirmHandler = null;
@@ -2724,6 +2941,10 @@ $("#appMessageCancel").addEventListener("click", () => {
 
 $("#appMessageDialog").addEventListener("close", () => {
   appMessageConfirmHandler = null;
+  const cancelButton = $("#appMessageCancel");
+  cancelButton.classList.remove("danger");
+  cancelButton.onclick = null;
+  delete cancelButton.dataset.action;
 });
 
 $("#settingsForm").addEventListener("submit", (event) => {
@@ -2736,8 +2957,24 @@ $("#settingsForm").addEventListener("submit", (event) => {
     soundMuted: !!state.settings.soundMuted,
   };
   saveState();
+  previewSettings = null;
   $("#settingsDialog").close();
   render();
+});
+
+$("#settingsTheme").addEventListener("change", () => {
+  applySettingsPreview($("#settingsTheme").value, $("#settingsMode").value);
+});
+
+$("#settingsMode").addEventListener("change", () => {
+  applySettingsPreview($("#settingsTheme").value, $("#settingsMode").value);
+});
+
+$("#settingsDialog").addEventListener("close", () => {
+  if (!previewSettings) return;
+  state.settings = { ...state.settings, theme: previewSettings.theme, mode: previewSettings.mode };
+  previewSettings = null;
+  applySettings();
 });
 
 function openOnboardingAfterWelcome() {
@@ -3470,6 +3707,22 @@ $("#trackingPanel").addEventListener("click", (event) => {
     return;
   }
 
+  const workoutOptions = event.target.closest("[data-workout-log-options]");
+  if (workoutOptions) {
+    const logId = workoutOptions.dataset.workoutLogOptions;
+    const log = state.logs.find((item) => item.profileId === state.activeProfileId && item.id === logId);
+    const template = log && templateById(log.templateId);
+    activeWorkoutLogOptionsId = logId;
+    $("#workoutLogActionsTitle").textContent = (template && template.name) || "Seance";
+    $("#workoutLogActionsDialog").showModal();
+    return;
+  }
+
+  if (event.target.closest("#addPastWorkoutLog")) {
+    openWorkoutLogEditor(null);
+    return;
+  }
+
   const edit = event.target.closest("[data-edit-health]");
   const remove = event.target.closest("[data-delete-health]");
   if (remove) {
@@ -3486,6 +3739,51 @@ $("#trackingPanel").addEventListener("click", (event) => {
   const item = state.health.find((candidate) => candidate.profileId === state.activeProfileId && candidate.id === edit.dataset.editHealth);
   if (!item) return;
   fillHealthForm(item);
+});
+
+$("#workoutLogEditForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  let log = state.logs.find((item) => item.profileId === state.activeProfileId && item.id === $("#workoutLogEditId").value);
+  if (!log) {
+    log = buildManualLogFromTemplate($("#workoutLogEditTemplate").value);
+    log.id = id();
+    state.logs.unshift(log);
+  }
+  log.date = $("#workoutLogEditDate").value || log.date;
+  document.querySelectorAll("[data-edit-log-entry]").forEach((row) => {
+    const entry = log.entries.find((item) => item.id === row.dataset.editLogEntry);
+    if (!entry) return;
+    entry.weight = Number(row.querySelector("[data-edit-log-weight]").value || 0);
+    const reps = row.querySelector("[data-edit-log-reps]").value.split(/[\/,; ]+/).filter(Boolean).map((value) => Number(value || 0));
+    entry.reps = reps;
+    entry.completed = reps.map((value) => value > 0);
+  });
+  applyProgression(log);
+  saveState();
+  $("#workoutLogEditDialog").close();
+  renderTracking();
+});
+
+$("#workoutLogEditTemplate").addEventListener("change", () => {
+  if ($("#workoutLogEditId").value) return;
+  const draft = buildManualLogFromTemplate($("#workoutLogEditTemplate").value);
+  $("#workoutLogEditEntries").innerHTML = logEditEntryRows(draft);
+});
+
+$("#workoutLogActionEdit").addEventListener("click", () => {
+  $("#workoutLogActionsDialog").close();
+  openWorkoutLogEditor(activeWorkoutLogOptionsId);
+});
+
+$("#workoutLogActionDelete").addEventListener("click", () => {
+  const logId = activeWorkoutLogOptionsId;
+  $("#workoutLogActionsDialog").close();
+  showAppConfirm("Supprimer cette seance et ses performances ?", () => {
+    state.logs = state.logs.filter((item) => item.id !== logId);
+    activeWorkoutLogOptionsId = null;
+    saveState();
+    renderTracking();
+  }, "Supprimer la seance", true, "Supprimer");
 });
 
 $("#healthActionEdit").addEventListener("click", () => {
@@ -3569,6 +3867,58 @@ function fillHealthForm(item) {
   $("#healthCalfRight").value = item.calfRight || "";
   $("#healthCalfLeft").value = item.calfLeft || "";
   $("#healthWeight").focus();
+}
+
+function logEditEntryRows(log) {
+  return (log.entries || []).map((entry) => `
+    <article class="item-card compact-form" data-edit-log-entry="${entry.id}">
+      <strong>${escapeHtml(entry.performedExerciseName || "Exercice")}</strong>
+      <label>Poids kg<input data-edit-log-weight inputmode="decimal" type="number" step="0.5" value="${escapeHtml(entry.weight || 0)}"></label>
+      <label>Reps par serie<input data-edit-log-reps inputmode="numeric" value="${escapeHtml((entry.reps || []).join("/"))}" placeholder="8/8/8/8"></label>
+    </article>
+  `).join("") || `<p class="empty">Aucune performance dans cette seance.</p>`;
+}
+
+function buildManualLogFromTemplate(templateId) {
+  const template = templateById(templateId);
+  return {
+    id: "",
+    profileId: state.activeProfileId,
+    date: todayKey,
+    templateId,
+    entries: template ? template.items.map((item) => {
+      const exerciseItem = exerciseById(item.exerciseId);
+      return {
+        id: id(),
+        planItemId: item.id,
+        exerciseId: item.exerciseId,
+        performedExerciseName: (exerciseItem && exerciseItem.name) || "Exercice",
+        weight: item.weight,
+        reps: Array(item.sets).fill(item.minReps),
+        completed: Array(item.sets).fill(true),
+      };
+    }) : [],
+    currentExerciseIndex: 0,
+    currentSetIndex: 0,
+    introSeenIndex: -1,
+    startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
+    manual: true,
+  };
+}
+
+function openWorkoutLogEditor(logId) {
+  const existing = logId ? state.logs.find((item) => item.profileId === state.activeProfileId && item.id === logId) : null;
+  const fallbackTemplate = profileTemplates()[0];
+  const log = existing || buildManualLogFromTemplate(fallbackTemplate && fallbackTemplate.id);
+  if (!log) return;
+  $("#workoutLogEditId").value = existing ? log.id : "";
+  $("#workoutLogEditTemplate").innerHTML = templateSelectOptions(log.templateId);
+  $("#workoutLogEditTemplate").disabled = !!existing;
+  $("#workoutLogTemplateWrap").hidden = false;
+  $("#workoutLogEditDate").value = existing ? (log.date || todayKey) : todayKey;
+  $("#workoutLogEditEntries").innerHTML = logEditEntryRows(log);
+  $("#workoutLogEditDialog").showModal();
 }
 
 window.addEventListener("beforeinstallprompt", (event) => {

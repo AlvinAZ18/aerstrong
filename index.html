@@ -13,14 +13,14 @@
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-mark" aria-hidden="true">
-          <img src="icons/aerstrong_logo.png" alt="">
+          <img src="icons/aerstrong_logo.png" alt="" draggable="false">
         </div>
         <div>
           <p class="eyebrow">AERSTRONG</p>
           <h1>Training System</h1>
           <p class="active-profile-chip" id="activeProfileName">Profil principal</p>
         </div>
-        <span class="version-badge" id="appVersionBadge">v1.4.1</span>
+        <span class="version-badge" id="appVersionBadge">v1.5.1</span>
         <button class="settings-button" id="openSettings" type="button" title="Options" aria-label="Options">⚙</button>
         <button class="icon-button" id="installButton" type="button" hidden title="Installer">Install</button>
       </header>
@@ -186,12 +186,12 @@
           <div class="section-head">
             <div>
               <p class="label">Suivi</p>
-              <h2>Performance & Health</h2>
+              <h2>Performance & Mensurations</h2>
             </div>
           </div>
           <div class="segmented" id="trackingModes">
             <button class="segment active" data-tracking-mode="performance" type="button">Performance</button>
-            <button class="segment" data-tracking-mode="health" type="button">Health</button>
+            <button class="segment" data-tracking-mode="health" type="button">Mensurations</button>
           </div>
           <div id="trackingPanel"></div>
         </section>
@@ -253,7 +253,7 @@
     <dialog id="welcomeDialog" class="wide-dialog">
       <form method="dialog" class="dialog-card onboarding-card welcome-card">
         <div class="onboarding-hero">
-          <img src="icons/aerstrong_logo.png" alt="">
+          <img src="icons/aerstrong_logo.png" alt="" draggable="false">
           <div>
             <p class="label">Bienvenue sur AERSTRONG</p>
             <h2>Bienvenue sur AERSTRONG</h2>
@@ -278,7 +278,7 @@
     <dialog id="aboutDialog" class="wide-dialog">
       <form method="dialog" class="dialog-card onboarding-card about-card">
         <div class="onboarding-hero">
-          <img src="icons/aerstrong_logo.png" alt="">
+          <img src="icons/aerstrong_logo.png" alt="" draggable="false">
           <div>
             <p class="label">À propos</p>
             <h2>À propos d'AERSTRONG</h2>
@@ -336,7 +336,7 @@
     <dialog id="onboardingDialog" class="wide-dialog">
       <form method="dialog" class="dialog-card onboarding-card" id="onboardingForm">
         <div class="onboarding-hero">
-          <img src="icons/aerstrong_logo.png" alt="">
+          <img src="icons/aerstrong_logo.png" alt="" draggable="false">
           <div>
             <p class="label">Bienvenue sur AERSTRONG</p>
             <h2>Prepare ton premier programme</h2>
@@ -514,6 +514,27 @@
       </form>
     </dialog>
 
+    <dialog id="workoutLogEditDialog" class="wide-dialog">
+      <form method="dialog" class="dialog-card" id="workoutLogEditForm">
+        <h2>Modifier la seance</h2>
+        <input id="workoutLogEditId" type="hidden">
+        <label id="workoutLogTemplateWrap">Seance<select id="workoutLogEditTemplate"></select></label>
+        <label>Date<input id="workoutLogEditDate" type="date"></label>
+        <div class="stack" id="workoutLogEditEntries"></div>
+        <button class="primary-button" type="submit">Enregistrer</button>
+        <button class="small-button" value="cancel">Annuler</button>
+      </form>
+    </dialog>
+
+    <dialog id="workoutLogActionsDialog">
+      <form method="dialog" class="dialog-card">
+        <h2 id="workoutLogActionsTitle">Seance</h2>
+        <button class="small-button" id="workoutLogActionEdit" type="button">Modifier</button>
+        <button class="small-button danger" id="workoutLogActionDelete" type="button">Supprimer</button>
+        <button class="small-button" value="cancel">Fermer</button>
+      </form>
+    </dialog>
+
     <dialog id="scheduleActionsDialog">
       <form method="dialog" class="dialog-card">
         <h2 id="scheduleActionsTitle">Planning</h2>
@@ -634,6 +655,7 @@
         <button class="small-button" data-exit-reason="erreur" type="button">Erreur</button>
         <button class="small-button" data-exit-reason="autre" type="button">Autre raison</button>
         <button class="primary-button" data-exit-reason="terminee" type="button">Finir quand meme</button>
+        <button class="small-button danger" data-exit-discard type="button">Quitter sans garder</button>
         <button class="small-button" value="cancel">Continuer la seance</button>
       </form>
     </dialog>
