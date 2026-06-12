@@ -1,5 +1,5 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.6.0";
+const appVersion = "v1.6.1";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -45,6 +45,8 @@ let activeWorkoutLogOptionsId = null;
 const sessionUi = {
   phase: "ready",
   restRemaining: 0,
+  restEndsAt: 0,
+  lastSoundSecond: null,
   restTimer: null,
   together: {},
 };
@@ -489,6 +491,15 @@ function addTrainingGroup(group) {
   return cleanGroup;
 }
 
+function fillTemplateEditDialog(template) {
+  $("#editTemplateId").value = template.id;
+  $("#editTemplateName").value = template.name;
+  const groups = profileTrainingGroups();
+  $("#editTemplateGroup").innerHTML = groups.map((group) => `<option value="${escapeHtml(group)}">${escapeHtml(group)}</option>`).join("");
+  $("#editTemplateGroup").value = groups.includes(template.group || "General") ? template.group || "General" : "General";
+  $("#editTemplateNewGroup").value = "";
+}
+
 function createTemplatesFromDefinitions(definitions, preset, group) {
   const cleanGroup = addTrainingGroup(group);
   const existing = new Set(profileTemplates().map((template) => template.name.toUpperCase()));
@@ -725,6 +736,24 @@ function playTimerBeep(kind) {
 function handleTimerSound(remaining) {
   if (remaining > 0 && remaining <= 3) playTimerBeep("tick");
   if (remaining === 0) playTimerBeep("done");
+}
+
+function syncRestCountdown(ui) {
+  if (!ui || ui.phase !== "rest" || !ui.restEndsAt) return;
+  const previous = ui.restRemaining;
+  const remaining = Math.max(0, Math.ceil((ui.restEndsAt - Date.now()) / 1000));
+  ui.restRemaining = remaining;
+  if (remaining !== previous && remaining <= 3 && ui.lastSoundSecond !== remaining) {
+    handleTimerSound(remaining);
+    ui.lastSoundSecond = remaining;
+  }
+  if (remaining === 0) {
+    clearInterval(ui.restTimer);
+    ui.phase = "ready";
+    ui.restEndsAt = 0;
+    ui.lastSoundSecond = null;
+    if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
+  }
 }
 
 async function requestWakeLock() {
@@ -1609,11 +1638,24 @@ function latestEntryForPlanItem(planItemId) {
   return null;
 }
 
+function latestEntryForExercise(exerciseId) {
+  const exerciseItem = exerciseById(exerciseId);
+  const names = new Set([exerciseId, exerciseItem && exerciseItem.name].filter(Boolean));
+  const logs = profileLogs()
+    .filter((log) => log.finishedAt && !log.archived)
+    .sort((a, b) => new Date(b.finishedAt) - new Date(a.finishedAt));
+  for (const log of logs) {
+    const entry = (log.entries || []).find((item) => item.exerciseId === exerciseId || names.has(item.performedExerciseName));
+    if (entry && (entry.completed || []).some(Boolean)) return { log, entry };
+  }
+  return null;
+}
+
 function coachProgressSuggestions() {
   const suggestions = [];
   profileTemplates().forEach((template) => {
     (template.items || []).forEach((item) => {
-      const latest = latestEntryForPlanItem(item.id);
+      const latest = latestEntryForExercise(item.exerciseId);
       const exercise = exerciseById(item.exerciseId);
       if (!latest || !exercise) return;
       const next = nextTarget(item, latest.entry.reps || []);
@@ -1834,6 +1876,7 @@ function renderTraining() {
   const exercise = exerciseById(item.exerciseId);
   const entry = entryFor(log, item);
   maybeShowExerciseIntro(log, item, exercise, entry, template);
+  syncRestCountdown(sessionUi);
   const setIndex = Math.min(log.currentSetIndex, item.sets - 1);
   const target = item.targetReps[setIndex] || item.minReps;
   const progress = `${log.currentExerciseIndex + 1}/${template.items.length}`;
@@ -1978,6 +2021,7 @@ function renderTogetherProfileCard(profileId, template) {
   const ui = togetherUi(profileId);
   const exercise = exerciseById(item.exerciseId);
   const entry = entryFor(log, item);
+  syncRestCountdown(ui);
   const setIndex = Math.min(log.currentSetIndex, item.sets - 1);
   const target = item.targetReps[setIndex] || item.minReps;
   const progress = `${log.currentExerciseIndex + 1}/${template.items.length}`;
@@ -2521,16 +2565,12 @@ function startRest(seconds) {
   clearInterval(sessionUi.restTimer);
   sessionUi.phase = "rest";
   sessionUi.restRemaining = seconds;
+  sessionUi.restEndsAt = Date.now() + seconds * 1000;
+  sessionUi.lastSoundSecond = seconds;
   sessionUi.restTimer = setInterval(() => {
-    sessionUi.restRemaining = Math.max(0, sessionUi.restRemaining - 1);
-    handleTimerSound(sessionUi.restRemaining);
-    if (sessionUi.restRemaining === 0) {
-      clearInterval(sessionUi.restTimer);
-      sessionUi.phase = "ready";
-      if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
-    }
+    syncRestCountdown(sessionUi);
     renderTraining();
-  }, 1000);
+  }, 250);
 }
 
 function togetherUi(profileId) {
@@ -2538,6 +2578,8 @@ function togetherUi(profileId) {
     sessionUi.together[profileId] = {
       phase: "ready",
       restRemaining: 0,
+      restEndsAt: 0,
+      lastSoundSecond: null,
       restTimer: null,
     };
   }
@@ -2549,16 +2591,12 @@ function startTogetherRest(profileId, seconds) {
   clearInterval(ui.restTimer);
   ui.phase = "rest";
   ui.restRemaining = seconds;
+  ui.restEndsAt = Date.now() + seconds * 1000;
+  ui.lastSoundSecond = seconds;
   ui.restTimer = setInterval(() => {
-    ui.restRemaining = Math.max(0, ui.restRemaining - 1);
-    handleTimerSound(ui.restRemaining);
-    if (ui.restRemaining === 0) {
-      clearInterval(ui.restTimer);
-      ui.phase = "ready";
-      if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
-    }
+    syncRestCountdown(ui);
     renderTraining();
-  }, 1000);
+  }, 250);
 }
 
 function clearTogetherTimers() {
@@ -2758,7 +2796,12 @@ window.addEventListener("popstate", (event) => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && currentViewName === "training") requestWakeLock();
+  if (document.visibilityState === "visible" && currentViewName === "training") {
+    requestWakeLock();
+    syncRestCountdown(sessionUi);
+    Object.values(sessionUi.together).forEach(syncRestCountdown);
+    renderTraining();
+  }
 });
 
 document.addEventListener("dragstart", (event) => {
@@ -2838,6 +2881,7 @@ $("#trainingScreen").addEventListener("click", (event) => {
     const [profileId, amount] = togetherRestAdjust.dataset.togetherRestAdjust.split(":");
     const ui = togetherUi(profileId);
     ui.restRemaining = Math.max(0, ui.restRemaining + Number(amount));
+    if (ui.restEndsAt) ui.restEndsAt = Date.now() + ui.restRemaining * 1000;
     renderTraining();
     return;
   }
@@ -2850,6 +2894,8 @@ $("#trainingScreen").addEventListener("click", (event) => {
     if (ui.phase === "rest") {
       clearInterval(ui.restTimer);
       ui.phase = "ready";
+      ui.restEndsAt = 0;
+      ui.lastSoundSecond = null;
       renderTraining();
     } else {
       completeTogetherSet(profileId);
@@ -2865,6 +2911,8 @@ $("#trainingScreen").addEventListener("click", (event) => {
     log.currentSetIndex = Number(setIndex);
     const ui = togetherUi(profileId);
     ui.phase = "ready";
+    ui.restEndsAt = 0;
+    ui.lastSoundSecond = null;
     saveState();
     renderTraining();
     return;
@@ -2884,6 +2932,8 @@ $("#trainingScreen").addEventListener("click", (event) => {
     log.introSeenIndex = log.currentExerciseIndex;
     sessionUi.phase = "ready";
     clearInterval(sessionUi.restTimer);
+    sessionUi.restEndsAt = 0;
+    sessionUi.lastSoundSecond = null;
     saveState();
     renderTraining();
     return;
@@ -2903,6 +2953,7 @@ $("#trainingScreen").addEventListener("click", (event) => {
   const restAdjust = event.target.closest("[data-rest-adjust]");
   if (restAdjust) {
     sessionUi.restRemaining = Math.max(0, sessionUi.restRemaining + Number(restAdjust.dataset.restAdjust));
+    if (sessionUi.restEndsAt) sessionUi.restEndsAt = Date.now() + sessionUi.restRemaining * 1000;
     renderTraining();
     return;
   }
@@ -2912,6 +2963,8 @@ $("#trainingScreen").addEventListener("click", (event) => {
     if (sessionUi.phase === "rest") {
       clearInterval(sessionUi.restTimer);
       sessionUi.phase = "ready";
+      sessionUi.restEndsAt = 0;
+      sessionUi.lastSoundSecond = null;
       renderTraining();
     } else {
       completeCurrentSet();
@@ -3455,8 +3508,7 @@ $("#templateList").addEventListener("click", (event) => {
   if (editTemplateButton) {
     const template = templateById(editTemplateButton.dataset.editTemplate);
     if (!template) return;
-    $("#editTemplateId").value = template.id;
-    $("#editTemplateName").value = template.name;
+    fillTemplateEditDialog(template);
     $("#editTemplateDialog").showModal();
     return;
   }
@@ -3521,6 +3573,9 @@ $("#editTemplateForm").addEventListener("submit", (event) => {
   const template = templateById($("#editTemplateId").value);
   if (!template) return;
   template.name = $("#editTemplateName").value.trim().toUpperCase();
+  const newGroup = $("#editTemplateNewGroup").value.trim();
+  template.group = addTrainingGroup(newGroup || $("#editTemplateGroup").value || "General");
+  templateGroupFilter = template.group;
   $("#editTemplateDialog").close();
   saveState();
   render();
@@ -3530,8 +3585,7 @@ $("#templateActionEdit").addEventListener("click", () => {
   const template = templateById(activeTemplateOptionsId);
   if (!template) return;
   $("#templateActionsDialog").close();
-  $("#editTemplateId").value = template.id;
-  $("#editTemplateName").value = template.name;
+  fillTemplateEditDialog(template);
   $("#editTemplateDialog").showModal();
 });
 

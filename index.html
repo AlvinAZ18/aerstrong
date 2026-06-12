@@ -20,7 +20,7 @@
           <h1>Training System</h1>
           <p class="active-profile-chip" id="activeProfileName">Profil principal</p>
         </div>
-        <span class="version-badge" id="appVersionBadge">v1.6.0</span>
+        <span class="version-badge" id="appVersionBadge">v1.6.1</span>
         <button class="settings-button" id="openSettings" type="button" title="Options" aria-label="Options">⚙</button>
         <button class="icon-button" id="installButton" type="button" hidden title="Installer">Install</button>
       </header>
@@ -442,6 +442,14 @@
         <label>
           Nom
           <input id="editTemplateName" required>
+        </label>
+        <label>
+          Groupe
+          <select id="editTemplateGroup"></select>
+        </label>
+        <label>
+          Nouveau groupe
+          <input id="editTemplateNewGroup" placeholder="Prise de masse, Force...">
         </label>
         <button class="primary-button" type="submit">Sauver</button>
         <button class="small-button" value="cancel">Annuler</button>
