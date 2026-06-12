@@ -1,5 +1,5 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.5.1";
+const appVersion = "v1.6.0";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -12,6 +12,7 @@ let activeExercisePlanId = null;
 let calendarMode = "week";
 let trackingMode = "performance";
 let builderMode = "sessions";
+let templateGroupFilter = "Tous";
 let equipmentFilter = "Tous";
 let muscleFilter = "Tous";
 let installPrompt = null;
@@ -51,6 +52,7 @@ const sessionUi = {
 const views = {
   home: $("#homeView"),
   training: $("#trainingView"),
+  planner: $("#plannerView"),
   builder: $("#builderView"),
   tracking: $("#trackingView"),
   future: $("#futureView"),
@@ -94,6 +96,10 @@ function planItem(exerciseId, sets, minReps, maxReps, weight, increment, rest) {
 
 function defaultMuscleGroups() {
   return ["Dos", "Pectoraux", "Jambes", "Epaules", "Biceps", "Triceps", "Abdos", "Trapezes", "Autre"];
+}
+
+function defaultTrainingGroups() {
+  return ["General", "Prise de masse", "Seche", "Force", "Maintien"];
 }
 
 function extraDefaultExercises() {
@@ -245,9 +251,9 @@ function starterState() {
       ...extraDefaultExercises(),
     ],
     templates: [
-      { id: tplPull, profileId, name: "PULL", items: [planItem(ids[0], 4, 8, 12, 80, 2.5), planItem(ids[1], 3, 10, 12, 55, 2.5), planItem(ids[6], 3, 10, 15, 14, 1)] },
-      { id: tplPush, profileId, name: "PUSH", items: [planItem(ids[2], 4, 8, 12, 70, 2.5), planItem(ids[3], 3, 8, 12, 22, 1), planItem(ids[7], 3, 10, 15, 35, 2.5)] },
-      { id: tplLegs, profileId, name: "LEGS", items: [planItem(ids[4], 4, 10, 15, 140, 5), planItem(ids[9], 3, 6, 10, 80, 2.5), planItem(ids[5], 3, 10, 15, 45, 2.5)] },
+      { id: tplPull, profileId, name: "PULL", group: "General", items: [planItem(ids[0], 4, 8, 12, 80, 2.5), planItem(ids[1], 3, 10, 12, 55, 2.5), planItem(ids[6], 3, 10, 15, 14, 1)] },
+      { id: tplPush, profileId, name: "PUSH", group: "General", items: [planItem(ids[2], 4, 8, 12, 70, 2.5), planItem(ids[3], 3, 8, 12, 22, 1), planItem(ids[7], 3, 10, 15, 35, 2.5)] },
+      { id: tplLegs, profileId, name: "LEGS", group: "General", items: [planItem(ids[4], 4, 10, 15, 140, 5), planItem(ids[9], 3, 6, 10, 80, 2.5), planItem(ids[5], 3, 10, 15, 45, 2.5)] },
     ],
     schedule: [{ id: id(), profileId, date: todayKey, templateId: tplPull, repeatWeekly: true }],
     logs: [],
@@ -255,6 +261,7 @@ function starterState() {
     nutrition: [],
     nutritionSettings: [],
     muscleGroups: defaultMuscleGroups(),
+    trainingGroups: defaultTrainingGroups(),
     settings: { theme: "gold", mode: "dark", weightUnit: "kg", lengthUnit: "cm", soundMuted: false },
     substitutions: {},
     dataVersion: dataSchemaVersion,
@@ -288,19 +295,21 @@ function normalizeState(saved) {
     height: saved.profile && saved.profile.height ? saved.profile.height : "",
   }];
   const activeProfileId = profiles.some((profile) => profile.id === saved.activeProfileId) ? saved.activeProfileId : profiles[0].id;
+  const templates = (saved.templates || base.templates).map((item) => ({ ...item, profileId: item.profileId || activeProfileId, group: item.group || "General" }));
   return {
     ...starterState(),
     ...saved,
     activeProfileId,
     profiles: profiles.slice(0, 3),
     exercises: mergedExercises.map((item) => ({ ...item, family: item.family === "Ischios" ? "Jambes" : item.family })),
-    templates: (saved.templates || base.templates).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
+    templates,
     schedule: (saved.schedule || base.schedule).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     logs: (saved.logs || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     health: (saved.health || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     nutrition: (saved.nutrition || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     nutritionSettings: (saved.nutritionSettings || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     muscleGroups: normalizeMuscleGroups(saved.muscleGroups, mergedExercises),
+    trainingGroups: normalizeTrainingGroups(saved.trainingGroups, templates),
     settings: migratedSettings(saved),
     substitutions: saved.substitutions || {},
     dataVersion: dataSchemaVersion,
@@ -335,6 +344,11 @@ function expandAlternativeExercises(exercises) {
 function normalizeMuscleGroups(savedGroups, exercises) {
   const groups = [...defaultMuscleGroups(), ...(savedGroups || []), ...(exercises || []).map((item) => item.family).filter(Boolean)];
   return [...new Set(groups.map((item) => item === "Ischios" ? "Jambes" : item).filter(Boolean))];
+}
+
+function normalizeTrainingGroups(savedGroups, templates) {
+  const groups = [...defaultTrainingGroups(), ...(savedGroups || []), ...(templates || []).map((item) => item.group).filter(Boolean)];
+  return [...new Set(groups.filter(Boolean))];
 }
 
 function migratedSettings(saved) {
@@ -430,6 +444,7 @@ function duplicateTemplate(templateId) {
     id: id(),
     profileId: state.activeProfileId,
     name: `${template.name} COPIE`,
+    group: template.group || "General",
     items: (template.items || []).map(clonePlanItem),
   };
   state.templates.push(copy);
@@ -453,24 +468,107 @@ function deleteTemplate(templateId) {
 }
 
 function createPplTemplates() {
-  const preset = goalPreset("muscle");
-  const definitions = [
-    { name: "PULL", exercises: ["Tirage vertical machine poulie", "Rowing poulie basse", "Pull-over poulie", "Face pull", "Curl halteres"] },
-    { name: "PUSH", exercises: ["Developpe couche machine", "Developpe incline halteres", "Developpe militaire halteres", "Elevation laterale halteres", "Extension triceps poulie"] },
-    { name: "LEGS", exercises: ["Presse a cuisses", "Leg curl", "Leg extension", "Souleve de terre roumain", "Mollets debout machine"] },
-  ];
+  createProgramModel("mass");
+}
+
+function uniqueTemplateName(name) {
+  const existing = new Set(profileTemplates().map((template) => template.name.toUpperCase()));
+  let candidate = name.toUpperCase();
+  let index = 2;
+  while (existing.has(candidate)) {
+    candidate = `${name.toUpperCase()} ${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function addTrainingGroup(group) {
+  if (!group) return "General";
+  const cleanGroup = group.trim();
+  if (!state.trainingGroups.includes(cleanGroup)) state.trainingGroups.push(cleanGroup);
+  return cleanGroup;
+}
+
+function createTemplatesFromDefinitions(definitions, preset, group) {
+  const cleanGroup = addTrainingGroup(group);
   const existing = new Set(profileTemplates().map((template) => template.name.toUpperCase()));
   definitions.forEach((definition) => {
-    if (existing.has(definition.name)) return;
     const templateId = id();
+    const name = existing.has(definition.name.toUpperCase()) ? uniqueTemplateName(definition.name) : definition.name.toUpperCase();
+    existing.add(name);
     state.templates.push({
       id: templateId,
       profileId: state.activeProfileId,
-      name: definition.name,
+      name,
+      group: cleanGroup,
       items: definition.exercises.map((name) => makeProgramItem(name, preset)),
     });
     expandedTemplateIds.add(templateId);
   });
+}
+
+function programModels() {
+  return [
+    {
+      id: "mass",
+      title: "Prise de masse",
+      group: "Prise de masse",
+      goal: "muscle",
+      meta: "PPL - 5 exos - 45/60 min - cardio non",
+      description: "Volume modere/eleve, fourchette 8-12 reps et repos autour de 90 secondes.",
+      sessions: [
+        { name: "PULL MASSE", exercises: ["Tirage vertical machine poulie", "Rowing poulie basse", "Pull-over poulie", "Face pull", "Curl halteres"] },
+        { name: "PUSH MASSE", exercises: ["Developpe couche machine", "Developpe incline halteres", "Developpe militaire halteres", "Elevation laterale halteres", "Extension triceps poulie"] },
+        { name: "LEGS MASSE", exercises: ["Presse a cuisses", "Leg curl", "Leg extension", "Souleve de terre roumain", "Mollets debout machine"] },
+      ],
+    },
+    {
+      id: "cut",
+      title: "Seche",
+      group: "Seche",
+      goal: "fatloss",
+      meta: "Full body - 4/5 exos - 35/50 min - cardio oui",
+      description: "Seances plus denses, reps plus hautes et repos courts pour garder du rythme.",
+      sessions: [
+        { name: "FULL BODY A SECHE", exercises: ["Presse a cuisses", "Tirage vertical machine poulie", "Developpe couche machine", "Leg curl", "Crunch poulie"] },
+        { name: "FULL BODY B SECHE", exercises: ["Hack squat", "Rowing poulie basse", "Developpe incline halteres", "Face pull", "Gainage"] },
+        { name: "FULL BODY C SECHE", exercises: ["Leg extension", "Pull-over poulie", "Pompes", "Curl poulie basse", "Extension triceps corde"] },
+      ],
+    },
+    {
+      id: "strength",
+      title: "Force",
+      group: "Force",
+      goal: "strength",
+      meta: "Upper/Lower - 4 exos - 50/70 min - cardio non",
+      description: "Moins d'exercices, charges plus lourdes, repos longs et progression stricte.",
+      sessions: [
+        { name: "UPPER FORCE", exercises: ["Developpe couche barre", "Rowing barre", "Developpe militaire barre", "Tractions pronation"] },
+        { name: "LOWER FORCE", exercises: ["Squat barre", "Souleve de terre roumain", "Presse a cuisses", "Mollets debout machine"] },
+        { name: "PULL FORCE", exercises: ["Souleve de terre", "Tractions pronation", "Rowing T-bar", "Curl barre EZ"] },
+      ],
+    },
+    {
+      id: "maintain",
+      title: "Maintien",
+      group: "Maintien",
+      goal: "maintain",
+      meta: "Full body - 4/6 exos - 35/55 min - cardio optionnel",
+      description: "Equilibre simple pour garder les acquis sans exploser le planning.",
+      sessions: [
+        { name: "FULL BODY MAINTIEN A", exercises: ["Presse a cuisses", "Tirage vertical machine poulie", "Developpe couche machine", "Elevation laterale halteres", "Crunch poulie"] },
+        { name: "FULL BODY MAINTIEN B", exercises: ["Hack squat", "Rowing poulie basse", "Developpe militaire halteres", "Leg curl", "Extension triceps poulie"] },
+      ],
+    },
+  ];
+}
+
+function createProgramModel(modelId) {
+  const model = programModels().find((item) => item.id === modelId);
+  if (!model) return;
+  createTemplatesFromDefinitions(model.sessions, goalPreset(model.goal), model.group);
+  templateGroupFilter = model.group;
+  builderMode = "sessions";
 }
 
 function onboardingProgramDefinitions(frequency) {
@@ -541,10 +639,12 @@ function generateOnboardingProgram(goal, frequency, weekdays) {
   const preset = goalPreset(goal);
   const defs = onboardingProgramDefinitions(frequency);
   const profileId = state.activeProfileId;
+  const group = addTrainingGroup(goalPresetLabel(goal));
   const templates = defs.map((definition) => ({
     id: id(),
     profileId,
     name: definition.name,
+    group,
     items: definition.exercises.map((name) => makeProgramItem(name, preset)),
   }));
   const selectedDays = sortedWeekdays((weekdays && weekdays.length ? weekdays : defaultWeekdays(templates.length)).slice(0, templates.length));
@@ -556,6 +656,16 @@ function generateOnboardingProgram(goal, frequency, weekdays) {
     templateId: template.id,
     repeatWeekly: true,
   })));
+}
+
+function goalPresetLabel(goal) {
+  const labels = {
+    fatloss: "Seche",
+    muscle: "Prise de masse",
+    maintain: "Maintien",
+    strength: "Force",
+  };
+  return labels[goal] || "General";
 }
 
 function saveState() {
@@ -646,6 +756,16 @@ function activeProfile() {
 
 function profileTemplates() {
   return state.templates.filter((item) => item.profileId === state.activeProfileId);
+}
+
+function profileTrainingGroups() {
+  return normalizeTrainingGroups(state.trainingGroups, profileTemplates());
+}
+
+function visibleProfileTemplates() {
+  const templates = profileTemplates();
+  if (templateGroupFilter === "Tous") return templates;
+  return templates.filter((template) => (template.group || "General") === templateGroupFilter);
 }
 
 function profileSchedule() {
@@ -1122,7 +1242,13 @@ function exerciseSuggestionButtons(query, selectedId = "") {
 }
 
 function templateSelectOptions(selectedId = "") {
-  return profileTemplates().map((template) => `<option value="${template.id}" ${template.id === selectedId ? "selected" : ""}>${escapeHtml(template.name)}</option>`).join("");
+  return profileTrainingGroups().map((group) => {
+    const items = profileTemplates()
+      .filter((template) => (template.group || "General") === group)
+      .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    if (!items.length) return "";
+    return `<optgroup label="${escapeHtml(group)}">${items.map((template) => `<option value="${template.id}" ${template.id === selectedId ? "selected" : ""}>${escapeHtml(template.name)}</option>`).join("")}</optgroup>`;
+  }).join("");
 }
 
 function resetExerciseForm() {
@@ -1310,9 +1436,9 @@ function renderTodayDashboard() {
         <div>
           <p class="label">Aujourd'hui</p>
           <h2>Aucune seance prevue</h2>
-          <p>Planifie une seance dans Builder pour l'afficher ici le bon jour.</p>
+          <p>Planifie une seance dans Planning pour l'afficher ici le bon jour.</p>
         </div>
-        <button class="primary-button" data-view="builder" type="button">Creer une seance</button>
+        <button class="primary-button" data-view="planner" type="button">Ouvrir Planning</button>
       </article>
     `;
     return;
@@ -1537,9 +1663,7 @@ function coachBalanceSuggestions() {
   return messages;
 }
 
-function renderCoachPanel() {
-  const panel = $("#coachPanel");
-  if (!panel) return;
+function coachPanelHtml() {
   const template = currentTemplate();
   const progress = coachProgressSuggestions();
   const balance = coachBalanceSuggestions();
@@ -1547,13 +1671,13 @@ function renderCoachPanel() {
   const nutrition = state.nutrition.find((item) => item.profileId === state.activeProfileId && item.date === todayKey);
   const nutritionHint = nutrition && nutrition.adherence === "bas" ? "Nutrition basse aujourd'hui : reste prudent sur les augmentations." : "Pas de signal nutrition négatif aujourd'hui.";
 
-  panel.innerHTML = `
+  return `
     <article class="coach-card primary">
       <span>À faire aujourd'hui</span>
       <strong>${template ? escapeHtml(template.name) : "Aucune séance prévue"}</strong>
-      <p>${template ? `${template.items.length} exercices. Exercice clé : ${escapeHtml((keyExercise && keyExercise.name) || "à définir")}.` : "Planifie une séance dans Builder pour recevoir des suggestions ciblées."}</p>
+      <p>${template ? `${template.items.length} exercices. Exercice clé : ${escapeHtml((keyExercise && keyExercise.name) || "à définir")}.` : "Planifie une séance dans Planning pour recevoir des suggestions ciblées."}</p>
       <p class="hint">${nutritionHint}</p>
-      ${template ? `<button class="primary-button" data-view="training" type="button">Démarrer</button>` : `<button class="small-button" data-view="builder" type="button">Aller au Builder</button>`}
+      ${template ? `<button class="primary-button" data-view="training" type="button">Démarrer</button>` : `<button class="small-button" data-view="planner" type="button">Aller au Planning</button>`}
     </article>
 
     <article class="coach-card">
@@ -1574,6 +1698,12 @@ function renderCoachPanel() {
   `;
 }
 
+function renderCoachPanel() {
+  const panel = $("#coachPanel");
+  if (!panel) return;
+  panel.innerHTML = coachPanelHtml();
+}
+
 function render() {
   applySettings();
   fillRestPickers();
@@ -1581,6 +1711,8 @@ function render() {
   renderBuilderPanes();
   renderTraining();
   renderBuilder();
+  renderTrainingModels();
+  renderPlannerOverview();
   renderCalendar();
   renderTracking();
   renderNutritionPanel();
@@ -1646,9 +1778,12 @@ function renderBuilderPanes() {
   const paneMap = {
     sessions: "#builderSessions",
     library: "#builderLibrary",
-    planner: "#builderPlanner",
+    models: "#builderModels",
   };
-  Object.entries(paneMap).forEach(([mode, selector]) => $(selector).classList.toggle("active", mode === builderMode));
+  Object.entries(paneMap).forEach(([mode, selector]) => {
+    const pane = $(selector);
+    if (pane) pane.classList.toggle("active", mode === builderMode);
+  });
   document.querySelectorAll("#builderModes .segment").forEach((button) => {
     button.classList.toggle("active", button.dataset.builderMode === builderMode);
   });
@@ -1673,7 +1808,7 @@ function renderTraining() {
   const scheduledItem = currentScheduledItem();
   const template = scheduledItem ? templateById(scheduledItem.templateId) : null;
   if (!template) {
-    $("#trainingScreen").innerHTML = `<p class="empty">Aucune seance active. Planifie une seance dans Builder ou reviens demain.</p>`;
+    $("#trainingScreen").innerHTML = `<p class="empty">Aucune seance active. Planifie une seance dans Planning ou reviens demain.</p>`;
     return;
   }
   const log = currentLog(template.id, scheduledItem);
@@ -1922,14 +2057,28 @@ function renderSessionSummary(log) {
 
 function renderBuilder() {
   const templates = profileTemplates();
-  $("#scheduleTemplate").innerHTML = templates.map((template) => `<option value="${template.id}">${escapeHtml(template.name)}</option>`).join("");
-  $("#templateList").innerHTML = templates.map((template) => {
+  const visibleTemplates = visibleProfileTemplates();
+  const groups = profileTrainingGroups();
+  const templateGroup = $("#templateGroup");
+  if (templateGroup) {
+    templateGroup.innerHTML = groups.map((group) => `<option value="${escapeHtml(group)}">${escapeHtml(group)}</option>`).join("");
+    templateGroup.value = groups.includes(templateGroupFilter) && templateGroupFilter !== "Tous" ? templateGroupFilter : "General";
+  }
+  const groupPill = $("#activeTrainingGroupPill");
+  if (groupPill) groupPill.textContent = templateGroupFilter;
+  const groupFilters = $("#trainingGroupFilters");
+  if (groupFilters) {
+    groupFilters.innerHTML = ["Tous", ...groups].map((group) => `<button class="filter-chip ${group === templateGroupFilter ? "active" : ""}" data-training-group="${escapeHtml(group)}" type="button">${escapeHtml(group)}</button>`).join("");
+  }
+  const scheduleTemplate = $("#scheduleTemplate");
+  if (scheduleTemplate) scheduleTemplate.innerHTML = templateSelectOptions(scheduleTemplate.value);
+  $("#templateList").innerHTML = visibleTemplates.map((template) => {
     const expanded = expandedTemplateIds.has(template.id);
     return `
     <article class="item-card builder-card">
       <div class="item-head">
         <button class="template-toggle ${expanded ? "active" : ""}" data-toggle-template="${template.id}" type="button" aria-expanded="${expanded}">
-          <span class="template-title"><strong>${escapeHtml(template.name)}</strong><small>${template.items.length} exos</small></span>
+          <span class="template-title"><strong>${escapeHtml(template.name)}</strong><small>${escapeHtml(template.group || "General")} - ${template.items.length} exos</small></span>
           <span class="chevron" aria-hidden="true"></span>
         </button>
         <button class="icon-mini" data-template-options="${template.id}" type="button" aria-label="Options ${escapeHtml(template.name)}">...</button>
@@ -1962,7 +2111,7 @@ function renderBuilder() {
       </div>
     </article>
   `;
-  }).join("");
+  }).join("") || `<p class="empty">Aucune seance dans ce groupe.</p>`;
 
   const exercises = state.exercises.filter((item) => {
     const equipmentMatch = equipmentFilter === "Tous" || item.equipment === equipmentFilter;
@@ -1991,6 +2140,59 @@ function renderBuilder() {
   `).join("") || `<p class="empty">Aucun exercice pour ces filtres.</p>`;
   enhanceBuilderRows();
   renderExerciseFormHelpers();
+}
+
+function renderTrainingModels() {
+  const panel = $("#programModelList");
+  if (!panel) return;
+  panel.innerHTML = programModels().map((model) => `
+    <article class="model-card">
+      <div>
+        <span>${escapeHtml(model.group)}</span>
+        <strong>${escapeHtml(model.title)}</strong>
+        <p>${escapeHtml(model.description)}</p>
+      </div>
+      <div class="model-meta">${escapeHtml(model.meta)}</div>
+      <button class="primary-button" data-create-model="${model.id}" type="button">Ajouter ce modele</button>
+    </article>
+  `).join("");
+}
+
+function renderPlannerOverview() {
+  const panel = $("#plannerOverview");
+  if (!panel) return;
+  const todayItems = scheduledFor(todayKey);
+  const pendingToday = pendingScheduledFor(todayKey);
+  const next = Array.from({ length: 21 }, (_, index) => {
+    const date = new Date(`${todayKey}T12:00:00`);
+    date.setDate(date.getDate() + index);
+    const key = localDateKey(date);
+    const item = pendingScheduledFor(key)[0];
+    return item ? { key, item } : null;
+  }).filter(Boolean)[0];
+  const weekCount = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(`${todayKey}T12:00:00`);
+    date.setDate(date.getDate() + index);
+    return scheduledFor(localDateKey(date)).length;
+  }).reduce((sum, value) => sum + value, 0);
+  const nextTemplate = next && templateById(next.item.templateId);
+  panel.innerHTML = `
+    <article class="planner-stat-card">
+      <span>Aujourd'hui</span>
+      <strong>${pendingToday.length ? `${pendingToday.length} a faire` : todayItems.length ? "Valide" : "Repos"}</strong>
+      <p>${todayItems.length ? todayItems.map((item) => escapeHtml((templateById(item.templateId) && templateById(item.templateId).name) || "Seance")).join(" / ") : "Aucune seance prevue."}</p>
+    </article>
+    <article class="planner-stat-card">
+      <span>Prochaine</span>
+      <strong>${nextTemplate ? escapeHtml(nextTemplate.name) : "Aucune"}</strong>
+      <p>${next ? escapeHtml(next.key) : "Planifie une seance pour demarrer."}</p>
+    </article>
+    <article class="planner-stat-card">
+      <span>7 jours</span>
+      <strong>${weekCount}</strong>
+      <p>seances planifiees</p>
+    </article>
+  `;
 }
 
 function enhanceBuilderRows() {
@@ -2085,6 +2287,11 @@ function renderPlannerCalendar() {
 }
 
 function renderTracking() {
+  if (trackingMode === "coach") {
+    $("#trackingPanel").innerHTML = `<section class="coach-panel">${coachPanelHtml()}</section>`;
+    return;
+  }
+
   if (trackingMode === "health") {
     const profile = activeProfile();
     const profileAge = ageFromBirthDate(profile.birthDate);
@@ -2569,11 +2776,14 @@ $("#builderModes").addEventListener("click", (event) => {
   renderBuilderPanes();
 });
 
-$("#createPplTemplates").addEventListener("click", () => {
-  createPplTemplates();
-  saveState();
-  render();
-});
+const legacyPplButton = $("#createPplTemplates");
+if (legacyPplButton) {
+  legacyPplButton.addEventListener("click", () => {
+    createPplTemplates();
+    saveState();
+    render();
+  });
+}
 
 $("#openSettings").addEventListener("click", () => {
   updateVersionLabels();
@@ -2828,7 +3038,10 @@ $("#confirmAlternative").addEventListener("click", () => {
 $("#templateForm").addEventListener("submit", (event) => {
   event.preventDefault();
   const templateId = id();
-  state.templates.push({ id: templateId, profileId: state.activeProfileId, name: $("#templateName").value.trim().toUpperCase(), items: [] });
+  const newGroup = $("#newTemplateGroup").value.trim();
+  const group = addTrainingGroup(newGroup || $("#templateGroup").value || "General");
+  state.templates.push({ id: templateId, profileId: state.activeProfileId, name: $("#templateName").value.trim().toUpperCase(), group, items: [] });
+  templateGroupFilter = group;
   expandedTemplateIds.add(templateId);
   event.target.reset();
   saveState();
@@ -3032,10 +3245,13 @@ $("#openNutrition").addEventListener("click", () => {
   if (!state.nutritionIntroSeen) $("#nutritionIntroDialog").showModal();
 });
 
-$("#openCoach").addEventListener("click", () => {
-  showView("coach");
-  renderCoachPanel();
-});
+const openCoachButton = $("#openCoach");
+if (openCoachButton) {
+  openCoachButton.addEventListener("click", () => {
+    showView("coach");
+    renderCoachPanel();
+  });
+}
 
 $("#acceptNutritionIntro").addEventListener("click", () => {
   state.nutritionIntroSeen = true;
@@ -3413,6 +3629,21 @@ $("#exerciseLibrary").addEventListener("click", (event) => {
   if (!exerciseItem) return;
   $("#exerciseOptionsTitle").textContent = exerciseItem.name;
   $("#exerciseOptionsDialog").showModal();
+});
+
+$("#trainingGroupFilters").addEventListener("click", (event) => {
+  const filter = event.target.closest("[data-training-group]");
+  if (!filter) return;
+  templateGroupFilter = filter.dataset.trainingGroup;
+  renderBuilder();
+});
+
+$("#programModelList").addEventListener("click", (event) => {
+  const modelButton = event.target.closest("[data-create-model]");
+  if (!modelButton) return;
+  createProgramModel(modelButton.dataset.createModel);
+  saveState();
+  render();
 });
 
 $("#editExerciseOption").addEventListener("click", () => {

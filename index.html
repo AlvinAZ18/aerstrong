@@ -20,7 +20,7 @@
           <h1>Training System</h1>
           <p class="active-profile-chip" id="activeProfileName">Profil principal</p>
         </div>
-        <span class="version-badge" id="appVersionBadge">v1.5.1</span>
+        <span class="version-badge" id="appVersionBadge">v1.6.0</span>
         <button class="settings-button" id="openSettings" type="button" title="Options" aria-label="Options">⚙</button>
         <button class="icon-button" id="installButton" type="button" hidden title="Installer">Install</button>
       </header>
@@ -33,9 +33,9 @@
           </div>
           <section id="todayDashboard"></section>
           <div class="main-menu-grid" aria-label="Menu principal">
-            <button class="main-menu-button training" data-view="training" type="button">
-              <span>Training</span>
-              <strong>Demarrer ou reprendre une seance</strong>
+            <button class="main-menu-button training" data-view="planner" type="button">
+              <span>Planning</span>
+              <strong>Organiser la semaine et lancer une seance</strong>
             </button>
             <button class="main-menu-button builder" data-view="builder" type="button">
               <span>Builder</span>
@@ -70,7 +70,7 @@
           <div class="segmented builder-tabs" id="builderModes" aria-label="Sections du builder">
             <button class="segment active" data-builder-mode="sessions" type="button">Seances</button>
             <button class="segment" data-builder-mode="library" type="button">Exercices</button>
-            <button class="segment" data-builder-mode="planner" type="button">Planning</button>
+            <button class="segment" data-builder-mode="models" type="button">Modeles</button>
           </div>
 
           <div class="builder-pane active" id="builderSessions">
@@ -79,13 +79,22 @@
                 Nom de la seance
                 <input id="templateName" placeholder="Push A, Pull B, Legs" required>
               </label>
+              <label>
+                Groupe
+                <select id="templateGroup"></select>
+              </label>
+              <label>
+                Nouveau groupe
+                <input id="newTemplateGroup" placeholder="Prise de masse, Force...">
+              </label>
               <button class="primary-button align-end" type="submit">Creer</button>
             </form>
             <section>
               <div class="item-head">
                 <h3>Seances</h3>
-                <button class="small-button" id="createPplTemplates" type="button">Modeles PPL</button>
+                <span class="status-pill" id="activeTrainingGroupPill">Tous</span>
               </div>
+              <div class="filter-row" id="trainingGroupFilters"></div>
               <div class="stack" id="templateList"></div>
             </section>
           </div>
@@ -150,35 +159,48 @@
             </section>
           </div>
 
-          <section class="planner-panel builder-pane" id="builderPlanner">
+          <section class="planner-panel builder-pane" id="builderModels">
             <div class="section-head">
               <div>
-                <p class="label">Planner</p>
-                <h2>Organisation hebdo</h2>
+                <p class="label">Modeles</p>
+                <h2>Programmes prets a adapter</h2>
               </div>
             </div>
-            <form class="input-grid" id="scheduleForm">
-              <label>
-                Date
-                <input id="scheduleDate" type="date" required>
-              </label>
-              <label>
-                Seance
-                <select id="scheduleTemplate" required></select>
-              </label>
-              <label class="check-row">
-                <input id="scheduleRepeat" type="checkbox">
-                Revient chaque semaine
-              </label>
-              <button class="primary-button align-end" type="submit">Planifier</button>
-            </form>
-            <div class="segmented" id="calendarModes" aria-label="Affichage planning">
-              <button class="segment active" data-calendar-mode="week" type="button">Semaine</button>
-              <button class="segment" data-calendar-mode="planner" type="button">Planner</button>
-              <button class="segment" data-calendar-mode="list" type="button">Liste</button>
-            </div>
-            <div class="stack" id="calendarList"></div>
+            <div class="model-grid" id="programModelList"></div>
           </section>
+        </section>
+
+        <section class="view" id="plannerView">
+          <button class="menu-back-button" data-view="home" type="button">Menu</button>
+          <div class="section-head">
+            <div>
+              <p class="label">Planning</p>
+              <h2>Organisation hebdo</h2>
+            </div>
+            <span class="status-pill">Calendrier</span>
+          </div>
+          <section class="planner-overview" id="plannerOverview"></section>
+          <form class="input-grid planner-form" id="scheduleForm">
+            <label>
+              Date
+              <input id="scheduleDate" type="date" required>
+            </label>
+            <label>
+              Seance
+              <select id="scheduleTemplate" required></select>
+            </label>
+            <label class="check-row">
+              <input id="scheduleRepeat" type="checkbox">
+              Revient chaque semaine
+            </label>
+            <button class="primary-button align-end" type="submit">Planifier</button>
+          </form>
+          <div class="segmented" id="calendarModes" aria-label="Affichage planning">
+            <button class="segment active" data-calendar-mode="week" type="button">Semaine</button>
+            <button class="segment" data-calendar-mode="planner" type="button">Planner</button>
+            <button class="segment" data-calendar-mode="list" type="button">Liste</button>
+          </div>
+          <div class="stack" id="calendarList"></div>
         </section>
 
         <section class="view" id="trackingView">
@@ -191,6 +213,7 @@
           </div>
           <div class="segmented" id="trackingModes">
             <button class="segment active" data-tracking-mode="performance" type="button">Performance</button>
+            <button class="segment" data-tracking-mode="coach" type="button">Coach</button>
             <button class="segment" data-tracking-mode="health" type="button">Mensurations</button>
           </div>
           <div id="trackingPanel"></div>
@@ -216,12 +239,6 @@
               <strong>Sommeil, fatigue et douleurs</strong>
               <p>Noter la recuperation pour mieux comprendre les performances et ajuster les seances.</p>
               <button class="small-button" type="button" disabled>Prochainement</button>
-            </article>
-            <article class="plus-card coach">
-              <span>Coach</span>
-              <strong>Suggestions intelligentes</strong>
-              <p>Analyser les resultats, proposer des objectifs et signaler les exercices a consolider.</p>
-              <button class="small-button" id="openCoach" type="button">Ouvrir</button>
             </article>
           </div>
         </section>
