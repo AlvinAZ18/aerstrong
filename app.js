@@ -1,5 +1,5 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.6.1";
+const appVersion = "v1.6.2";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -1651,6 +1651,79 @@ function latestEntryForExercise(exerciseId) {
   return null;
 }
 
+function planItemForEntry(log, entry) {
+  const template = templateById(log.templateId);
+  const exact = template && (template.items || []).find((item) => item.id === entry.planItemId);
+  if (exact) return exact;
+  const exerciseName = String(entry.performedExerciseName || "").toLowerCase();
+  return profileTemplates()
+    .flatMap((templateItem) => templateItem.items || [])
+    .find((item) => {
+      const exercise = exerciseById(item.exerciseId);
+      return item.exerciseId === entry.exerciseId || (exercise && exercise.name.toLowerCase() === exerciseName);
+    });
+}
+
+function coachSuggestionFromEntry(log, entry, item) {
+  const exercise = exerciseById((item && item.exerciseId) || entry.exerciseId);
+  const exerciseName = (exercise && exercise.name) || entry.performedExerciseName || "Exercice";
+  const reps = (entry.reps || []).filter((rep, index) => !entry.completed || entry.completed[index]).map((rep) => Number(rep || 0));
+  const safeReps = reps.length ? reps : [0];
+  const targetItem = item || {
+    sets: safeReps.length,
+    minReps: Math.min(...safeReps.filter(Boolean), 8),
+    maxReps: Math.max(...safeReps.filter(Boolean), 12),
+    weight: Number(entry.weight || 0),
+    increment: 2.5,
+    targetReps: safeReps,
+  };
+  const next = nextTarget(targetItem, reps);
+  const template = templateById(log.templateId);
+  const context = template ? ` (${template.name})` : "";
+  if (next.reason === "haut de fourchette atteint") {
+    return {
+      type: "Augmenter",
+      family: exercise && exercise.family,
+      templateId: log.templateId,
+      text: `${exerciseName}${context} : haut de fourchette valide. Vise ${next.weight} ${state.settings.weightUnit} sur ${next.targetReps.join("/")}.`,
+    };
+  }
+  if (next.reason === "objectif valide") {
+    return {
+      type: "Progression",
+      family: exercise && exercise.family,
+      templateId: log.templateId,
+      text: `${exerciseName}${context} : objectif valide. Prochaine cible : ${next.targetReps.join("/")}.`,
+    };
+  }
+  return {
+    type: "Consolider",
+    family: exercise && exercise.family,
+    templateId: log.templateId,
+    text: `${exerciseName}${context} : garde la charge et consolide ${next.targetReps.join("/")}.`,
+  };
+}
+
+function diversifiedSuggestions(items, limit = 8) {
+  const selected = [];
+  const usedTemplates = new Set();
+  const usedFamilies = new Set();
+  const passes = [
+    (item) => !usedTemplates.has(item.templateId) && !usedFamilies.has(item.family),
+    (item) => !usedTemplates.has(item.templateId),
+    () => true,
+  ];
+  passes.forEach((predicate) => {
+    items.forEach((item) => {
+      if (selected.length >= limit || selected.includes(item) || !predicate(item)) return;
+      selected.push(item);
+      if (item.templateId) usedTemplates.add(item.templateId);
+      if (item.family) usedFamilies.add(item.family);
+    });
+  });
+  return selected;
+}
+
 function coachProgressSuggestions() {
   const suggestions = [];
   profileTemplates().forEach((template) => {
@@ -1678,6 +1751,21 @@ function coachProgressSuggestions() {
     });
   });
   return suggestions.slice(0, 4);
+}
+
+function coachProgressSuggestions() {
+  const suggestions = [];
+  const seen = new Set();
+  completedLogs().slice().reverse().forEach((log) => {
+    (log.entries || []).forEach((entry) => {
+      const key = entry.exerciseId || String(entry.performedExerciseName || "").toLowerCase();
+      if (!key || seen.has(key) || !(entry.completed || []).some(Boolean)) return;
+      const item = planItemForEntry(log, entry);
+      suggestions.push(coachSuggestionFromEntry(log, entry, item));
+      seen.add(key);
+    });
+  });
+  return diversifiedSuggestions(suggestions, 8);
 }
 
 function coachBalanceSuggestions() {
