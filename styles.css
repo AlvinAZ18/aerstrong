@@ -1709,6 +1709,48 @@ mark {
   gap: 12px;
 }
 
+.chart-accordion {
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+
+.chart-accordion summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 58px;
+  padding: 0 14px;
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 950;
+  cursor: pointer;
+  list-style: none;
+}
+
+.chart-accordion summary::-webkit-details-marker {
+  display: none;
+}
+
+.chart-accordion summary i {
+  width: 12px;
+  height: 12px;
+  border-right: 3px solid var(--red-2);
+  border-bottom: 3px solid var(--red-2);
+  transform: rotate(45deg);
+  transition: transform 0.18s ease;
+}
+
+.chart-accordion[open] summary i {
+  transform: rotate(225deg);
+}
+
+.chart-accordion > .mini-chart-card,
+.chart-accordion > .health-chart-grid {
+  margin: 0 12px 12px;
+}
+
 .health-chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

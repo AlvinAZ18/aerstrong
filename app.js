@@ -1,5 +1,5 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.6.3";
+const appVersion = "v1.6.4";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -2424,6 +2424,15 @@ function renderTracking() {
     return;
   }
 
+  if (trackingMode === "charts") {
+    $("#trackingPanel").innerHTML = `
+      <section class="stack">
+        ${healthChartsHtml()}
+      </section>
+    `;
+    return;
+  }
+
   if (trackingMode === "health") {
     const profile = activeProfile();
     const profileAge = ageFromBirthDate(profile.birthDate);
@@ -2450,8 +2459,6 @@ function renderTracking() {
           <button class="primary-button align-end" type="submit">Sauver profil</button>
         </form>
       </article>
-
-      ${healthChartsHtml()}
 
       <form class="input-grid compact-form" id="healthForm">
         <input id="healthEditId" type="hidden">
@@ -2710,27 +2717,45 @@ function healthMiniChart(field, label, unit = "cm") {
 
 function healthChartsHtml() {
   const entries = healthHistorySorted();
-  if (!entries.length) return "";
+  if (!entries.length) return `
+    <article class="item-card">
+      <strong>Courbes physiques</strong>
+      <p class="empty">Ajoute des donnees dans Mensurations pour afficher les courbes.</p>
+    </article>
+  `;
+  const measurementCharts = [
+    ["waist", "Taille"],
+    ["chest", "Poitrine"],
+    ["shoulders", "Epaules"],
+    ["bicepsRight", "Biceps D"],
+    ["bicepsLeft", "Biceps G"],
+    ["thighRight", "Cuisse D"],
+    ["thighLeft", "Cuisse G"],
+    ["calfRight", "Mollet D"],
+    ["calfLeft", "Mollet G"],
+  ].map(([field, label]) => healthMiniChart(field, label, "cm")).join("");
   return `
     <article class="item-card health-chart-panel">
       <div class="item-head">
         <div>
-          <strong>Evolution physique</strong>
+          <strong>Courbes physiques</strong>
           <p>${entries.length} releves enregistres</p>
         </div>
       </div>
-      ${healthMiniChart("weight", "Poids", "kg")}
-      <div class="health-chart-grid">
-        ${[
-          ["waist", "Taille"],
-          ["chest", "Poitrine"],
-          ["shoulders", "Epaules"],
-          ["bicepsRight", "Biceps D"],
-          ["bicepsLeft", "Biceps G"],
-          ["thighRight", "Cuisse D"],
-          ["thighLeft", "Cuisse G"],
-        ].map(([field, label]) => healthMiniChart(field, label, "cm")).join("")}
-      </div>
+      <details class="chart-accordion" open>
+        <summary>
+          <span>Poids</span>
+          <i aria-hidden="true"></i>
+        </summary>
+        ${healthMiniChart("weight", "Poids", "kg")}
+      </details>
+      <details class="chart-accordion">
+        <summary>
+          <span>Mensurations</span>
+          <i aria-hidden="true"></i>
+        </summary>
+        <div class="health-chart-grid">${measurementCharts}</div>
+      </details>
     </article>
   `;
 }
