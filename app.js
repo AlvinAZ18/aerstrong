@@ -1,5 +1,5 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.6.2";
+const appVersion = "v1.6.3";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -2451,6 +2451,8 @@ function renderTracking() {
         </form>
       </article>
 
+      ${healthChartsHtml()}
+
       <form class="input-grid compact-form" id="healthForm">
         <input id="healthEditId" type="hidden">
         <label>Date des mesures<input id="healthDate" type="date" value="${escapeHtml(lastHealth.date || todayKey)}"></label>
@@ -2641,6 +2643,96 @@ function barChartHtml(items, emptyText) {
       <strong>${escapeHtml(item.value)}</strong>
     </div>
   `).join("")}</div>`;
+}
+
+function healthHistorySorted() {
+  return profileHealth()
+    .filter((item) => item.date)
+    .slice()
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+function healthSeries(field) {
+  return healthHistorySorted()
+    .map((item) => ({ date: item.date, value: Number(String(item[field] || "").replace(",", ".")) }))
+    .filter((item) => Number.isFinite(item.value) && item.value > 0);
+}
+
+function lineChartHtml(series, emptyText, unit = "") {
+  if (series.length < 2) return `<p class="empty">${emptyText}</p>`;
+  const width = 320;
+  const height = 160;
+  const padX = 28;
+  const padY = 24;
+  const values = series.map((item) => item.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const points = series.map((item, index) => {
+    const x = padX + (index / Math.max(1, series.length - 1)) * (width - padX * 2);
+    const y = height - padY - ((item.value - min) / range) * (height - padY * 2);
+    return { ...item, x, y };
+  });
+  const path = points.map((point, index) => `${index ? "L" : "M"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
+  const first = series[0];
+  const last = series[series.length - 1];
+  const delta = last.value - first.value;
+  const deltaLabel = `${delta >= 0 ? "+" : ""}${delta.toFixed(1).replace(".", ",")} ${unit}`.trim();
+  return `
+    <div class="line-chart">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Courbe">
+        <line x1="${padX}" y1="${height - padY}" x2="${width - padX}" y2="${height - padY}"></line>
+        <line x1="${padX}" y1="${padY}" x2="${padX}" y2="${height - padY}"></line>
+        <path d="${path}"></path>
+        ${points.map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="3.6"><title>${escapeHtml(point.date)} - ${point.value}${unit}</title></circle>`).join("")}
+      </svg>
+      <div class="chart-footer">
+        <span>${escapeHtml(first.date)} -> ${escapeHtml(last.date)}</span>
+        <strong>${escapeHtml(deltaLabel)}</strong>
+      </div>
+    </div>
+  `;
+}
+
+function healthMiniChart(field, label, unit = "cm") {
+  const series = healthSeries(field);
+  const latest = series[series.length - 1];
+  return `
+    <article class="mini-chart-card">
+      <div class="item-head">
+        <strong>${escapeHtml(label)}</strong>
+        <span class="status-pill">${latest ? `${latest.value} ${unit}` : "-"}</span>
+      </div>
+      ${lineChartHtml(series, `Ajoute au moins deux valeurs pour voir la courbe ${label.toLowerCase()}.`, unit)}
+    </article>
+  `;
+}
+
+function healthChartsHtml() {
+  const entries = healthHistorySorted();
+  if (!entries.length) return "";
+  return `
+    <article class="item-card health-chart-panel">
+      <div class="item-head">
+        <div>
+          <strong>Evolution physique</strong>
+          <p>${entries.length} releves enregistres</p>
+        </div>
+      </div>
+      ${healthMiniChart("weight", "Poids", "kg")}
+      <div class="health-chart-grid">
+        ${[
+          ["waist", "Taille"],
+          ["chest", "Poitrine"],
+          ["shoulders", "Epaules"],
+          ["bicepsRight", "Biceps D"],
+          ["bicepsLeft", "Biceps G"],
+          ["thighRight", "Cuisse D"],
+          ["thighLeft", "Cuisse G"],
+        ].map(([field, label]) => healthMiniChart(field, label, "cm")).join("")}
+      </div>
+    </article>
+  `;
 }
 
 function formatTime(totalSeconds) {
