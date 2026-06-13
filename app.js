@@ -1,5 +1,5 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.6.4";
+const appVersion = "v1.6.5";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -2715,12 +2715,81 @@ function healthMiniChart(field, label, unit = "cm") {
   `;
 }
 
+function sportSessionSeries(metric) {
+  return completedLogs().map((log) => {
+    const template = templateById(log.templateId);
+    const stats = logStats(log);
+    return {
+      date: `${log.date}${template ? ` ${template.name}` : ""}`,
+      value: metric === "calories" ? Number(stats.calories || 0) : Math.round(Number(stats.tonnage || 0)),
+    };
+  }).filter((item) => item.value > 0);
+}
+
+function exerciseRmChartData(limit = 6) {
+  const byExercise = new Map();
+  completedLogs().forEach((log) => {
+    (log.entries || []).forEach((entry) => {
+      const reps = (entry.reps || []).filter((rep, index) => !entry.completed || entry.completed[index]);
+      if (!reps.length) return;
+      const bestRm = Math.max(...reps.map((rep) => estimateOneRm(entry.weight, rep)));
+      if (!bestRm) return;
+      const key = entry.performedExerciseName || entry.exerciseId || "Exercice";
+      if (!byExercise.has(key)) byExercise.set(key, []);
+      byExercise.get(key).push({ date: log.date, value: Math.round(bestRm * 10) / 10 });
+    });
+  });
+  return [...byExercise.entries()]
+    .map(([name, series]) => ({ name, series }))
+    .filter((item) => item.series.length >= 2)
+    .sort((a, b) => b.series[b.series.length - 1].value - a.series[a.series.length - 1].value)
+    .slice(0, limit);
+}
+
+function sportChartsHtml() {
+  const tonnage = sportSessionSeries("tonnage");
+  const calories = sportSessionSeries("calories");
+  const rmCharts = exerciseRmChartData();
+  if (tonnage.length < 2 && calories.length < 2 && !rmCharts.length) {
+    return `<p class="empty">Ajoute au moins deux seances terminees pour afficher les courbes sport.</p>`;
+  }
+  return `
+    <div class="health-chart-grid">
+      <article class="mini-chart-card">
+        <div class="item-head">
+          <strong>Tonnage</strong>
+          <span class="status-pill">${tonnage.length} seances</span>
+        </div>
+        ${lineChartHtml(tonnage, "Deux seances minimum pour voir le tonnage.", "kg")}
+      </article>
+      <article class="mini-chart-card">
+        <div class="item-head">
+          <strong>Calories estimees</strong>
+          <span class="status-pill">${calories.length} seances</span>
+        </div>
+        ${lineChartHtml(calories, "Deux seances minimum pour voir les calories.", "kcal")}
+      </article>
+    </div>
+    <div class="health-chart-grid">
+      ${rmCharts.map((item) => `
+        <article class="mini-chart-card">
+          <div class="item-head">
+            <strong>${escapeHtml(item.name)}</strong>
+            <span class="status-pill">RM</span>
+          </div>
+          ${lineChartHtml(item.series, "Deux performances minimum pour voir la RM.", "kg")}
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
 function healthChartsHtml() {
   const entries = healthHistorySorted();
-  if (!entries.length) return `
+  if (!entries.length && !completedLogs().length) return `
     <article class="item-card">
-      <strong>Courbes physiques</strong>
-      <p class="empty">Ajoute des donnees dans Mensurations pour afficher les courbes.</p>
+      <strong>Courbes</strong>
+      <p class="empty">Ajoute des donnees dans Mensurations ou termine des seances pour afficher les courbes.</p>
     </article>
   `;
   const measurementCharts = [
@@ -2738,8 +2807,8 @@ function healthChartsHtml() {
     <article class="item-card health-chart-panel">
       <div class="item-head">
         <div>
-          <strong>Courbes physiques</strong>
-          <p>${entries.length} releves enregistres</p>
+          <strong>Courbes</strong>
+          <p>${entries.length} releves - ${completedLogs().length} seances terminees</p>
         </div>
       </div>
       <details class="chart-accordion" open>
@@ -2755,6 +2824,13 @@ function healthChartsHtml() {
           <i aria-hidden="true"></i>
         </summary>
         <div class="health-chart-grid">${measurementCharts}</div>
+      </details>
+      <details class="chart-accordion">
+        <summary>
+          <span>Performance sport</span>
+          <i aria-hidden="true"></i>
+        </summary>
+        <div class="chart-accordion-content">${sportChartsHtml()}</div>
       </details>
     </article>
   `;

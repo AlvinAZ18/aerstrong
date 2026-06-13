@@ -316,9 +316,9 @@ main {
 .segment {
   min-height: 42px;
   padding: 0 8px;
-  border: 0;
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
   border-radius: 11px;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.02);
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 900;
@@ -327,7 +327,17 @@ main {
 .tab.active,
 .segment.active {
   color: white;
+  border-color: rgba(var(--accent-rgb), 0.72);
   background: linear-gradient(135deg, var(--red), var(--accent-dark));
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.13);
+}
+
+#trackingModes {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+#trackingModes .segment {
+  font-size: 0.72rem;
 }
 
 .view {
@@ -1747,8 +1757,14 @@ mark {
 }
 
 .chart-accordion > .mini-chart-card,
-.chart-accordion > .health-chart-grid {
+.chart-accordion > .health-chart-grid,
+.chart-accordion > .chart-accordion-content {
   margin: 0 12px 12px;
+}
+
+.chart-accordion-content {
+  display: grid;
+  gap: 10px;
 }
 
 .health-chart-grid {
