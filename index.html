@@ -20,7 +20,7 @@
           <h1>Training System</h1>
           <p class="active-profile-chip" id="activeProfileName">Profil principal</p>
         </div>
-        <span class="version-badge" id="appVersionBadge">v1.6.5</span>
+        <span class="version-badge" id="appVersionBadge">v1.7.0</span>
         <button class="settings-button" id="openSettings" type="button" title="Options" aria-label="Options">⚙</button>
         <button class="icon-button" id="installButton" type="button" hidden title="Installer">Install</button>
       </header>
@@ -564,8 +564,20 @@
     <dialog id="scheduleActionsDialog">
       <form method="dialog" class="dialog-card">
         <h2 id="scheduleActionsTitle">Planning</h2>
+        <button class="small-button" id="scheduleActionMove" type="button">Deplacer cette occurrence</button>
         <button class="small-button danger" id="scheduleActionDelete" type="button">Supprimer</button>
         <button class="small-button" value="cancel">Fermer</button>
+      </form>
+    </dialog>
+
+    <dialog id="moveScheduleDialog">
+      <form method="dialog" class="dialog-card" id="moveScheduleForm">
+        <h2>Deplacer la seance</h2>
+        <input id="moveScheduleId" type="hidden">
+        <input id="moveScheduleFrom" type="hidden">
+        <label>Nouvelle date<input id="moveScheduleDate" type="date" required></label>
+        <button class="primary-button" type="submit">Deplacer</button>
+        <button class="small-button" value="cancel">Annuler</button>
       </form>
     </dialog>
 

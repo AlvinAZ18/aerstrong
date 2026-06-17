@@ -2022,6 +2022,27 @@ mark {
   gap: 8px;
 }
 
+.calendar-session-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.calendar-mini-options {
+  display: inline-grid;
+  width: 30px;
+  height: 28px;
+  place-items: center;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid rgba(var(--accent-rgb), 0.32);
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 950;
+}
+
 .week-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(86px, 1fr));

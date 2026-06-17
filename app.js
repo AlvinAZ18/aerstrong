@@ -1,5 +1,5 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.6.5";
+const appVersion = "v1.7.0";
 const dataSchemaVersion = 5;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -35,6 +35,7 @@ let activeTemplateOptionsId = null;
 let activePlanItemOptions = null;
 let activeHealthOptionsId = null;
 let activeScheduleOptionsId = null;
+let activeScheduleOptionsDate = "";
 let activeMuscleGroupOptions = "";
 let libraryExerciseSearch = "";
 let appMessageConfirmHandler = null;
@@ -47,6 +48,7 @@ const sessionUi = {
   restRemaining: 0,
   restEndsAt: 0,
   lastSoundSecond: null,
+  warmupRest: false,
   restTimer: null,
   together: {},
 };
@@ -258,6 +260,7 @@ function starterState() {
       { id: tplLegs, profileId, name: "LEGS", group: "General", items: [planItem(ids[4], 4, 10, 15, 140, 5), planItem(ids[9], 3, 6, 10, 80, 2.5), planItem(ids[5], 3, 10, 15, 45, 2.5)] },
     ],
     schedule: [{ id: id(), profileId, date: todayKey, templateId: tplPull, repeatWeekly: true }],
+    scheduleMoves: [],
     logs: [],
     health: [],
     nutrition: [],
@@ -306,6 +309,7 @@ function normalizeState(saved) {
     exercises: mergedExercises.map((item) => ({ ...item, family: item.family === "Ischios" ? "Jambes" : item.family })),
     templates,
     schedule: (saved.schedule || base.schedule).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
+    scheduleMoves: (saved.scheduleMoves || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     logs: (saved.logs || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     health: (saved.health || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     nutrition: (saved.nutrition || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
@@ -680,9 +684,41 @@ function goalPresetLabel(goal) {
 }
 
 function saveState() {
+  pruneWorkoutHistory();
   state.dataVersion = dataSchemaVersion;
   state[brandMigrationKey] = true;
   localStorage.setItem(storageKey, JSON.stringify(state));
+}
+
+function workoutHistoryKey(log) {
+  const template = templateById(log.templateId);
+  const name = ((template && template.name) || log.templateName || "SEANCE").toUpperCase();
+  if (name.includes("PULL")) return "PULL";
+  if (name.includes("PUSH")) return "PUSH";
+  if (name.includes("LEGS") || name.includes("LOWER")) return "LEGS";
+  if (name.includes("UPPER")) return "UPPER";
+  return name.split(/\s+/)[0] || "SEANCE";
+}
+
+function pruneWorkoutHistory() {
+  const keepIds = new Set();
+  const grouped = new Map();
+  state.logs.forEach((log) => {
+    if (!log.finishedAt || log.archived || completedSetCount(log) === 0) {
+      keepIds.add(log.id);
+      return;
+    }
+    const key = `${log.profileId}:${workoutHistoryKey(log)}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(log);
+  });
+  grouped.forEach((logs) => {
+    logs
+      .sort((a, b) => new Date(b.finishedAt || b.date) - new Date(a.finishedAt || a.date))
+      .slice(0, 2)
+      .forEach((log) => keepIds.add(log.id));
+  });
+  state.logs = state.logs.filter((log) => keepIds.has(log.id));
 }
 
 function applySettings() {
@@ -724,7 +760,7 @@ function playTimerBeep(kind) {
   oscillator.type = final ? "square" : "triangle";
   oscillator.frequency.setValueAtTime(final ? 1480 : 980, now);
   gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(final ? 0.75 : 0.42, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.75, now + 0.01);
   gain.gain.exponentialRampToValueAtTime(0.0001, now + (final ? 0.42 : 0.18));
   oscillator.connect(gain);
   gain.connect(compressor);
@@ -739,7 +775,7 @@ function handleTimerSound(remaining) {
 }
 
 function syncRestCountdown(ui) {
-  if (!ui || ui.phase !== "rest" || !ui.restEndsAt) return;
+  if (!ui || !["rest", "warmup"].includes(ui.phase) || !ui.restEndsAt) return;
   const previous = ui.restRemaining;
   const remaining = Math.max(0, Math.ceil((ui.restEndsAt - Date.now()) / 1000));
   ui.restRemaining = remaining;
@@ -799,6 +835,10 @@ function visibleProfileTemplates() {
 
 function profileSchedule() {
   return state.schedule.filter((item) => item.profileId === state.activeProfileId);
+}
+
+function profileScheduleMoves() {
+  return (state.scheduleMoves || []).filter((item) => item.profileId === state.activeProfileId);
 }
 
 function profileLogs() {
@@ -864,15 +904,28 @@ function templateById(templateId) {
 
 function scheduledFor(dateKey) {
   const schedule = profileSchedule();
-  const exact = schedule.filter((item) => item.date === dateKey).map((item) => ({ ...item, scheduleKey: `${item.id}:${dateKey}` }));
+  const moves = profileScheduleMoves();
+  const movedFrom = new Set(moves.map((move) => `${move.scheduleId}:${move.fromDate}`));
+  const movedTo = moves
+    .filter((move) => move.toDate === dateKey)
+    .map((move) => {
+      const source = schedule.find((item) => item.id === move.scheduleId);
+      return source ? { ...source, date: move.toDate, movedFromDate: move.fromDate, scheduleKey: `${source.id}:${move.fromDate}:moved:${move.toDate}` } : null;
+    })
+    .filter(Boolean);
+  const exact = schedule
+    .filter((item) => item.date === dateKey && !movedFrom.has(`${item.id}:${dateKey}`))
+    .map((item) => ({ ...item, scheduleKey: `${item.id}:${dateKey}` }));
   const repeated = schedule.filter((item) => {
     if (!item.repeatWeekly || item.date === dateKey) return false;
     const start = new Date(`${item.date}T12:00:00`);
     const current = new Date(`${dateKey}T12:00:00`);
     const days = Math.round((current - start) / 86400000);
     return days > 0 && days % 7 === 0;
-  }).map((item) => ({ ...item, scheduleKey: `${item.id}:${dateKey}` }));
-  return [...exact, ...repeated];
+  })
+    .filter((item) => !movedFrom.has(`${item.id}:${dateKey}`))
+    .map((item) => ({ ...item, scheduleKey: `${item.id}:${dateKey}` }));
+  return [...exact, ...repeated, ...movedTo];
 }
 
 function isScheduleDone(item, dateKey, profileId = state.activeProfileId) {
@@ -1948,6 +2001,11 @@ function renderTraining() {
     return;
   }
 
+  if (!log.warmupDone) {
+    renderWarmupScreen(log, template);
+    return;
+  }
+
   const item = currentPlanItem(log);
   if (!item) {
     if (completedSetCount(log) > 0) {
@@ -2139,6 +2197,54 @@ function renderTogetherProfileCard(profileId, template) {
       <input class="rep-input" data-together-reps="${profileId}" inputmode="numeric" type="number" min="0" value="${escapeHtml(entry.reps[setIndex] || target)}" aria-label="Reps realisees ${escapeHtml(profileNameById(profileId))}">
       <button class="go-button together-go ${ui.phase === "rest" ? "resting" : ""}" data-together-go="${profileId}" type="button">${ui.phase === "rest" ? t("skip") : "GO"}</button>
     </article>
+  `;
+}
+
+function renderWarmupScreen(log, template) {
+  const seconds = Number(log.warmupSeconds || 150);
+  if (log.warmupChoice === "yes" && log.warmupStarted) {
+    syncRestCountdown(sessionUi);
+    if (sessionUi.warmupRest && sessionUi.phase === "ready" && sessionUi.restRemaining === 0) {
+      log.warmupDone = true;
+      sessionUi.warmupRest = false;
+      saveState();
+      renderTraining();
+      return;
+    }
+  }
+  const running = log.warmupChoice === "yes" && log.warmupStarted && sessionUi.phase === "warmup";
+  const displaySeconds = running ? sessionUi.restRemaining : seconds;
+  const timerMood = running && sessionUi.restRemaining <= 3 ? "timer-danger" : running && sessionUi.restRemaining <= 10 ? "timer-warning" : "";
+  $("#trainingScreen").innerHTML = `
+    <section class="training-hero warmup-hero">
+      <div class="training-topline">
+        <span>${escapeHtml(template.name)}</span>
+        <span>Echauffement</span>
+      </div>
+      <h2>Echauffement ?</h2>
+      <p>Active un repos avant le premier exercice si tu viens de terminer ton echauffement.</p>
+    </section>
+
+    ${!log.warmupChoice ? `
+      <section class="go-panel">
+        <p class="label">Debut de seance</p>
+        <div class="rep-target">02:30</div>
+        <div class="button-row">
+          <button class="primary-button" data-warmup-choice="yes" type="button">Oui</button>
+          <button class="small-button" data-warmup-choice="no" type="button">Non</button>
+        </div>
+      </section>
+    ` : `
+      <section class="go-panel ${timerMood}">
+        <p class="label">${running ? "Repos echauffement" : "Temps echauffement"}</p>
+        <div class="rest-line active">
+          <button class="timer-adjust" data-warmup-adjust="-5" type="button">-5</button>
+          <div class="rep-target">${formatTime(displaySeconds)}</div>
+          <button class="timer-adjust" data-warmup-adjust="5" type="button">+5</button>
+        </div>
+        <button class="go-button ${running ? "resting" : ""}" data-warmup-go type="button">${running ? t("skip") : "GO"}</button>
+      </section>
+    `}
   `;
 }
 
@@ -2384,7 +2490,8 @@ function renderCalendar() {
   const items = [...profileSchedule()].sort((a, b) => a.date.localeCompare(b.date));
   $("#calendarList").innerHTML = items.map((item) => {
     const template = templateById(item.templateId);
-    return `<article class="item-card set-row schedule-row"><span>${item.date} - ${escapeHtml(template && template.name)}${item.repeatWeekly ? " - chaque semaine" : ""}</span><div class="schedule-actions">${scheduleStatusPill(item, item.date)}<button class="icon-mini" data-schedule-options="${item.id}" type="button" aria-label="Options planning">...</button></div></article>`;
+    const itemDate = item.movedFromDate || item.date;
+    return `<article class="item-card set-row schedule-row"><span>${item.date} - ${escapeHtml(template && template.name)}${item.repeatWeekly ? " - chaque semaine" : ""}${item.movedFromDate ? ` - deplacee depuis ${escapeHtml(item.movedFromDate)}` : ""}</span><div class="schedule-actions">${scheduleStatusPill(item, item.date)}<button class="icon-mini" data-schedule-options="${item.id}:${itemDate}" type="button" aria-label="Options planning">...</button></div></article>`;
   }).join("") || `<p class="empty">Aucune seance planifiee.</p>`;
 }
 
@@ -2400,7 +2507,7 @@ function renderWeekCalendar() {
   $("#calendarList").innerHTML = `<div class="week-grid">${days.map((date) => {
     const key = localDateKey(date);
     const planned = scheduledFor(key);
-    return `<article class="day-card ${key === todayKey ? "today" : ""}"><span>${date.toLocaleDateString("fr-FR", { weekday: "short" })}</span><strong>${date.getDate()}</strong>${planned.map((item) => `<p>${escapeHtml((templateById(item.templateId) && templateById(item.templateId).name) || "Seance")} ${scheduleStatusPill(item, key)}</p>`).join("") || `<p>Repos</p>`}</article>`;
+    return `<article class="day-card ${key === todayKey ? "today" : ""}"><span>${date.toLocaleDateString("fr-FR", { weekday: "short" })}</span><strong>${date.getDate()}</strong>${planned.map((item) => `<p class="calendar-session-line">${escapeHtml((templateById(item.templateId) && templateById(item.templateId).name) || "Seance")} ${scheduleStatusPill(item, key)} <button class="calendar-mini-options" data-schedule-options="${item.id}:${item.movedFromDate || key}" type="button" aria-label="Options planning">...</button></p>`).join("") || `<p>Repos</p>`}</article>`;
   }).join("")}</div>`;
 }
 
@@ -2414,7 +2521,7 @@ function renderPlannerCalendar() {
     const key = localDateKey(date);
     const planned = scheduledFor(key);
     if (!planned.length) return "";
-    return `<article class="planner-row"><div><span>${date.toLocaleDateString("fr-FR", { weekday: "long" })}</span><strong>${date.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</strong></div><div class="planner-sessions">${planned.map((item) => `<span>${escapeHtml((templateById(item.templateId) && templateById(item.templateId).name) || "Seance")} ${scheduleStatusPill(item, key)}</span>`).join("")}</div></article>`;
+    return `<article class="planner-row"><div><span>${date.toLocaleDateString("fr-FR", { weekday: "long" })}</span><strong>${date.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</strong></div><div class="planner-sessions">${planned.map((item) => `<span>${escapeHtml((templateById(item.templateId) && templateById(item.templateId).name) || "Seance")} ${scheduleStatusPill(item, key)} <button class="calendar-mini-options" data-schedule-options="${item.id}:${item.movedFromDate || key}" type="button" aria-label="Options planning">...</button></span>`).join("")}</div></article>`;
   }).join("") || `<p class="empty">Aucune seance dans les 3 prochaines semaines.</p>`;
 }
 
@@ -2715,8 +2822,8 @@ function healthMiniChart(field, label, unit = "cm") {
   `;
 }
 
-function sportSessionSeries(metric) {
-  return completedLogs().map((log) => {
+function sportSessionSeries(logs, metric) {
+  return logs.map((log) => {
     const template = templateById(log.templateId);
     const stats = logStats(log);
     return {
@@ -2724,6 +2831,18 @@ function sportSessionSeries(metric) {
       value: metric === "calories" ? Number(stats.calories || 0) : Math.round(Number(stats.tonnage || 0)),
     };
   }).filter((item) => item.value > 0);
+}
+
+function groupedCompletedLogsByWorkout() {
+  const groups = new Map();
+  completedLogs().forEach((log) => {
+    const key = workoutHistoryKey(log);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(log);
+  });
+  return [...groups.entries()]
+    .map(([name, logs]) => ({ name, logs: logs.sort((a, b) => new Date(a.finishedAt || a.date) - new Date(b.finishedAt || b.date)) }))
+    .sort((a, b) => a.name.localeCompare(b.name, "fr"));
 }
 
 function exerciseRmChartData(limit = 6) {
@@ -2747,28 +2866,29 @@ function exerciseRmChartData(limit = 6) {
 }
 
 function sportChartsHtml() {
-  const tonnage = sportSessionSeries("tonnage");
-  const calories = sportSessionSeries("calories");
+  const workoutGroups = groupedCompletedLogsByWorkout();
   const rmCharts = exerciseRmChartData();
-  if (tonnage.length < 2 && calories.length < 2 && !rmCharts.length) {
+  const workoutCharts = workoutGroups.map((group) => {
+    const tonnage = sportSessionSeries(group.logs, "tonnage");
+    const calories = sportSessionSeries(group.logs, "calories");
+    if (tonnage.length < 2 && calories.length < 2) return "";
+    return `
+      <article class="mini-chart-card workout-chart-card">
+        <div class="item-head">
+          <strong>${escapeHtml(group.name)}</strong>
+          <span class="status-pill">${group.logs.length} seances</span>
+        </div>
+        ${lineChartHtml(tonnage, `Deux ${group.name} minimum pour voir le tonnage.`, "kg")}
+        ${lineChartHtml(calories, `Deux ${group.name} minimum pour voir les calories.`, "kcal")}
+      </article>
+    `;
+  }).join("");
+  if (!workoutCharts && !rmCharts.length) {
     return `<p class="empty">Ajoute au moins deux seances terminees pour afficher les courbes sport.</p>`;
   }
   return `
     <div class="health-chart-grid">
-      <article class="mini-chart-card">
-        <div class="item-head">
-          <strong>Tonnage</strong>
-          <span class="status-pill">${tonnage.length} seances</span>
-        </div>
-        ${lineChartHtml(tonnage, "Deux seances minimum pour voir le tonnage.", "kg")}
-      </article>
-      <article class="mini-chart-card">
-        <div class="item-head">
-          <strong>Calories estimees</strong>
-          <span class="status-pill">${calories.length} seances</span>
-        </div>
-        ${lineChartHtml(calories, "Deux seances minimum pour voir les calories.", "kcal")}
-      </article>
+      ${workoutCharts || `<p class="empty">Deux seances du meme type sont necessaires pour comparer tonnage et calories.</p>`}
     </div>
     <div class="health-chart-grid">
       ${rmCharts.map((item) => `
@@ -2845,6 +2965,19 @@ function formatTime(totalSeconds) {
 function startRest(seconds) {
   clearInterval(sessionUi.restTimer);
   sessionUi.phase = "rest";
+  sessionUi.restRemaining = seconds;
+  sessionUi.restEndsAt = Date.now() + seconds * 1000;
+  sessionUi.lastSoundSecond = seconds;
+  sessionUi.restTimer = setInterval(() => {
+    syncRestCountdown(sessionUi);
+    renderTraining();
+  }, 250);
+}
+
+function startWarmupRest(seconds) {
+  clearInterval(sessionUi.restTimer);
+  sessionUi.phase = "warmup";
+  sessionUi.warmupRest = true;
   sessionUi.restRemaining = seconds;
   sessionUi.restEndsAt = Date.now() + seconds * 1000;
   sessionUi.lastSoundSecond = seconds;
@@ -3122,6 +3255,55 @@ $("#openSettings").addEventListener("click", () => {
 });
 
 $("#trainingScreen").addEventListener("click", (event) => {
+  const warmupChoice = event.target.closest("[data-warmup-choice]");
+  if (warmupChoice) {
+    const template = currentTemplate();
+    if (!template) return;
+    const log = currentLog(template.id);
+    log.warmupChoice = warmupChoice.dataset.warmupChoice;
+    log.warmupSeconds = Number(log.warmupSeconds || 150);
+    if (log.warmupChoice === "no") log.warmupDone = true;
+    saveState();
+    renderTraining();
+    return;
+  }
+
+  const warmupAdjust = event.target.closest("[data-warmup-adjust]");
+  if (warmupAdjust) {
+    const template = currentTemplate();
+    if (!template) return;
+    const log = currentLog(template.id);
+    const nextSeconds = Math.max(15, Number(log.warmupSeconds || sessionUi.restRemaining || 150) + Number(warmupAdjust.dataset.warmupAdjust));
+    log.warmupSeconds = nextSeconds;
+    if (sessionUi.phase === "warmup" && sessionUi.restEndsAt) {
+      sessionUi.restRemaining = Math.max(0, sessionUi.restRemaining + Number(warmupAdjust.dataset.warmupAdjust));
+      sessionUi.restEndsAt = Date.now() + sessionUi.restRemaining * 1000;
+    }
+    saveState();
+    renderTraining();
+    return;
+  }
+
+  if (event.target.closest("[data-warmup-go]")) {
+    const template = currentTemplate();
+    if (!template) return;
+    const log = currentLog(template.id);
+    if (sessionUi.phase === "warmup") {
+      clearInterval(sessionUi.restTimer);
+      sessionUi.phase = "ready";
+      sessionUi.restRemaining = 0;
+      sessionUi.restEndsAt = 0;
+      sessionUi.warmupRest = false;
+      log.warmupDone = true;
+    } else {
+      log.warmupStarted = true;
+      startWarmupRest(Number(log.warmupSeconds || 150));
+    }
+    saveState();
+    renderTraining();
+    return;
+  }
+
   const soundToggle = event.target.closest("[data-sound-toggle]");
   if (soundToggle) {
     state.settings.soundMuted = !(state.settings && state.settings.soundMuted);
@@ -4050,7 +4232,9 @@ $("#calendarModes").addEventListener("click", (event) => {
 $("#calendarList").addEventListener("click", (event) => {
   const options = event.target.closest("[data-schedule-options]");
   if (options) {
-    activeScheduleOptionsId = options.dataset.scheduleOptions;
+    const [scheduleId, scheduleDate] = options.dataset.scheduleOptions.split(":");
+    activeScheduleOptionsId = scheduleId;
+    activeScheduleOptionsDate = scheduleDate || todayKey;
     const item = state.schedule.find((candidate) => candidate.id === activeScheduleOptionsId);
     const template = item && templateById(item.templateId);
     $("#scheduleActionsTitle").textContent = template ? template.name : "Planning";
@@ -4060,6 +4244,7 @@ $("#calendarList").addEventListener("click", (event) => {
   const remove = event.target.closest("[data-delete-schedule]");
   if (!remove) return;
   state.schedule = state.schedule.filter((item) => item.id !== remove.dataset.deleteSchedule);
+  state.scheduleMoves = (state.scheduleMoves || []).filter((move) => move.scheduleId !== remove.dataset.deleteSchedule);
   saveState();
   render();
 });
@@ -4068,7 +4253,32 @@ $("#scheduleActionDelete").addEventListener("click", () => {
   if (!activeScheduleOptionsId) return;
   $("#scheduleActionsDialog").close();
   state.schedule = state.schedule.filter((item) => item.id !== activeScheduleOptionsId);
+  state.scheduleMoves = (state.scheduleMoves || []).filter((move) => move.scheduleId !== activeScheduleOptionsId);
   activeScheduleOptionsId = null;
+  saveState();
+  render();
+});
+
+$("#scheduleActionMove").addEventListener("click", () => {
+  if (!activeScheduleOptionsId) return;
+  $("#scheduleActionsDialog").close();
+  $("#moveScheduleId").value = activeScheduleOptionsId;
+  $("#moveScheduleFrom").value = activeScheduleOptionsDate || todayKey;
+  $("#moveScheduleDate").value = activeScheduleOptionsDate || todayKey;
+  $("#moveScheduleDialog").showModal();
+});
+
+$("#moveScheduleForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const scheduleId = $("#moveScheduleId").value;
+  const fromDate = $("#moveScheduleFrom").value || todayKey;
+  const toDate = $("#moveScheduleDate").value;
+  if (!scheduleId || !toDate) return;
+  state.scheduleMoves = (state.scheduleMoves || []).filter((move) => !(move.profileId === state.activeProfileId && move.scheduleId === scheduleId && move.fromDate === fromDate));
+  if (fromDate !== toDate) {
+    state.scheduleMoves.push({ id: id(), profileId: state.activeProfileId, scheduleId, fromDate, toDate });
+  }
+  $("#moveScheduleDialog").close();
   saveState();
   render();
 });
