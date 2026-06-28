@@ -1,6 +1,8 @@
 const storageKey = "forgefit-v4";
-const appVersion = "v1.7.0";
-const dataSchemaVersion = 5;
+const backupStorageKey = `${storageKey}-backup`;
+const backupMetaKey = `${storageKey}-backup-meta`;
+const appVersion = "v1.8.3";
+const dataSchemaVersion = 6;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
 const nutritionEnabled = false;
@@ -275,8 +277,8 @@ function starterState() {
   };
 }
 
-function exercise(idValue, name, family, equipment, rest, alternatives) {
-  return { id: idValue, name, family, equipment, rest, alternatives };
+function exercise(idValue, name, family, equipment, rest, alternatives, code = "") {
+  return { id: idValue, code, name, family, equipment, rest, alternatives };
 }
 
 function loadState() {
@@ -291,7 +293,7 @@ function loadState() {
 
 function normalizeState(saved) {
   const base = starterState();
-  const mergedExercises = expandAlternativeExercises(mergeExercises(saved.exercises || [], base.exercises));
+  const mergedExercises = ensureExerciseCodes(expandAlternativeExercises(mergeExercises(saved.exercises || [], base.exercises)));
   const fallbackProfileId = saved.activeProfileId || (saved.profiles && saved.profiles[0] && saved.profiles[0].id) || id();
   const profiles = saved.profiles && saved.profiles.length ? saved.profiles : [{
     id: fallbackProfileId,
@@ -323,6 +325,23 @@ function normalizeState(saved) {
     onboardingComplete: saved.onboardingComplete === undefined ? true : saved.onboardingComplete,
     [brandMigrationKey]: saved[brandMigrationKey] || (saved.settings && saved.settings.theme === "red"),
   };
+}
+
+function ensureExerciseCodes(exercises) {
+  const used = new Set();
+  return (exercises || []).map((item, index) => {
+    let code = String(item.code || "").trim();
+    if (!/^e[0-9a-z]+$/i.test(code) || used.has(code.toLowerCase())) {
+      let suffix = (index + 1).toString(36);
+      code = `e${suffix}`;
+      while (used.has(code.toLowerCase())) {
+        suffix = (parseInt(suffix, 36) + 1).toString(36);
+        code = `e${suffix}`;
+      }
+    }
+    used.add(code.toLowerCase());
+    return { ...item, code };
+  });
 }
 
 function inferEquipmentFromName(name, fallback) {
@@ -687,7 +706,66 @@ function saveState() {
   pruneWorkoutHistory();
   state.dataVersion = dataSchemaVersion;
   state[brandMigrationKey] = true;
+  state.exercises = ensureExerciseCodes(state.exercises);
+  rotateLocalBackup("auto");
   localStorage.setItem(storageKey, JSON.stringify(state));
+  localStorage.setItem(`${storageKey}-saved-at`, new Date().toISOString());
+}
+
+function rotateLocalBackup(reason = "auto") {
+  try {
+    const current = localStorage.getItem(storageKey);
+    if (!current) return false;
+    const backup = localStorage.getItem(backupStorageKey);
+    if (backup === current) return true;
+    localStorage.setItem(backupStorageKey, current);
+    localStorage.setItem(backupMetaKey, JSON.stringify({
+      reason,
+      appVersion,
+      dataVersion: dataSchemaVersion,
+      savedAt: new Date().toISOString(),
+      bytes: current.length,
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function backupInfo() {
+  try {
+    const raw = localStorage.getItem(backupMetaKey);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function requestPersistentStorage() {
+  if (!navigator.storage || !navigator.storage.persist) {
+    state.settings.storageProtectionAsked = true;
+    state.settings.storagePersistent = false;
+    saveState();
+    updateDataStatus("Protection locale non disponible sur ce navigateur. La backup interne reste active.");
+    renderSettingsStatus();
+    return false;
+  }
+  try {
+    const persistent = await navigator.storage.persist();
+    state.settings.storageProtectionAsked = true;
+    state.settings.storagePersistent = persistent;
+    saveState();
+    updateDataStatus(persistent ? "Stockage protege sur ce telephone. Backup locale automatique active." : "Backup locale active. Le navigateur n'a pas garanti le stockage persistant.");
+    renderSettingsStatus();
+    return persistent;
+  } catch {
+    state.settings.storageProtectionAsked = true;
+    state.settings.storagePersistent = false;
+    saveState();
+    updateDataStatus("Backup locale active. La demande de protection a echoue sur ce navigateur.");
+    renderSettingsStatus();
+    return false;
+  }
 }
 
 function workoutHistoryKey(log) {
@@ -3138,6 +3216,38 @@ function updateDataStatus(message) {
   if (status) status.textContent = message || "Les donnees restent sur ce telephone. Garde un export en securite.";
 }
 
+function renderSettingsStatus() {
+  const info = backupInfo();
+  const asked = state.settings.storageProtectionAsked;
+  const persistent = state.settings.storagePersistent;
+  const protectedText = persistent ? "Stockage protege" : asked ? "Backup automatique active" : "Protection locale non activee";
+  const backupText = info && info.savedAt ? `Derniere backup : ${new Date(info.savedAt).toLocaleString("fr-FR")}` : "Backup locale en attente de la prochaine modification.";
+  updateDataStatus(`${protectedText}. ${backupText}`);
+  const card = $("#storageProtectionCard");
+  const button = $("#protectStorageButton");
+  const title = $("#storageProtectionTitle");
+  const text = $("#storageProtectionText");
+  if (card) {
+    card.classList.toggle("is-protected", Boolean(persistent));
+    card.classList.toggle("is-backup-active", Boolean(asked && !persistent));
+  }
+  if (button) {
+    button.textContent = persistent ? "Protege" : asked ? "Backup active" : "Activer";
+    button.classList.toggle("is-confirmed", Boolean(asked));
+    button.setAttribute("aria-pressed", asked ? "true" : "false");
+  }
+  if (title) {
+    title.textContent = persistent ? "Protection locale active" : asked ? "Backup automatique active" : "Activer la protection locale";
+  }
+  if (text) {
+    text.textContent = persistent
+      ? "Le telephone a accepte le stockage persistant. AERSTRONG garde aussi une backup precedente en securite."
+      : asked
+        ? "Le navigateur n'a pas garanti le stockage persistant, mais AERSTRONG garde une backup locale avant chaque modification."
+        : "Demande au telephone de conserver les donnees AERSTRONG et garde une backup precedente en cas d'erreur.";
+  }
+}
+
 function updateVersionLabels() {
   const versionBadge = $("#appVersionBadge");
   const dataPill = $("#dataVersionPill");
@@ -3153,24 +3263,180 @@ function showUpdateAvailable() {
 
 function exportData() {
   saveState();
+  downloadCompactExport("manual");
+}
+
+function downloadCompactExport(reason = "manual") {
   const profile = activeProfile();
-  const payload = {
-    app: "AERSTRONG",
-    appVersion,
-    storageKey,
-    exportedAt: new Date().toISOString(),
-    data: state,
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const payload = compactStateExport(state);
+  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
   const link = document.createElement("a");
   const safeName = String(profile.name || "profil").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "profil";
   link.href = URL.createObjectURL(blob);
-  link.download = `aerstrong-${safeName}-${todayKey}.json`;
+  link.download = `aerstrong-${safeName}-${todayKey}.aerstrong.json`;
   document.body.appendChild(link);
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-  updateDataStatus("Export cree. Garde ce fichier comme sauvegarde.");
+  state.settings.lastCompactExportAt = new Date().toISOString();
+  localStorage.setItem(storageKey, JSON.stringify(state));
+  updateDataStatus(reason === "legacy-conversion"
+    ? "Nouvelle sauvegarde compacte creee. Tu peux supprimer l'ancien fichier JSON."
+    : "Export compact cree. Garde ce fichier comme sauvegarde.");
+}
+
+function compactStateExport(source) {
+  const exercises = ensureExerciseCodes(source.exercises || []);
+  const idToCode = new Map(exercises.map((item) => [item.id, item.code]));
+  const nameToCode = new Map(exercises.map((item) => [item.name.toLowerCase(), item.code]));
+  const compactItem = (item) => [
+    item.id,
+    idToCode.get(item.exerciseId) || item.exerciseId,
+    item.sets,
+    item.minReps,
+    item.maxReps,
+    item.weight,
+    item.increment,
+    item.rest,
+    item.targetReps || [],
+  ];
+  const compactEntry = (entry) => [
+    entry.id,
+    entry.planItemId,
+    idToCode.get(entry.exerciseId) || entry.exerciseId,
+    entry.performedExerciseName,
+    entry.weight,
+    entry.reps || [],
+    entry.completed || [],
+  ];
+  return {
+    app: "AERSTRONG",
+    format: "aerstrong-compact-v1",
+    appVersion,
+    dataVersion: dataSchemaVersion,
+    exportedAt: new Date().toISOString(),
+    data: {
+      activeProfileId: source.activeProfileId,
+      profiles: source.profiles,
+      exercises: exercises.map((item) => [
+        item.code,
+        item.id,
+        item.name,
+        item.family,
+        item.equipment,
+        item.rest,
+        (item.alternatives || []).map((name) => nameToCode.get(String(name).toLowerCase()) || name),
+      ]),
+      templates: (source.templates || []).map((template) => ({
+        id: template.id,
+        p: template.profileId,
+        n: template.name,
+        g: template.group,
+        i: (template.items || []).map(compactItem),
+      })),
+      schedule: (source.schedule || []).map((item) => [item.id, item.profileId, item.date, item.templateId, item.repeatWeekly ? 1 : 0]),
+      scheduleMoves: (source.scheduleMoves || []).map((item) => [item.id, item.profileId, item.scheduleId, item.fromDate, item.toDate]),
+      logs: (source.logs || []).map((log) => ({
+        id: log.id,
+        p: log.profileId,
+        d: log.date,
+        t: log.templateId,
+        tn: log.templateName,
+        sk: log.scheduleKey,
+        ci: log.currentExerciseIndex,
+        cs: log.currentSetIndex,
+        f: log.finishedAt,
+        a: log.archived ? 1 : 0,
+        wc: log.warmupChoice,
+        wd: log.warmupDone ? 1 : 0,
+        ws: log.warmupSeconds,
+        e: (log.entries || []).map(compactEntry),
+      })),
+      health: source.health || [],
+      nutrition: source.nutrition || [],
+      nutritionSettings: source.nutritionSettings || [],
+      muscleGroups: source.muscleGroups || [],
+      trainingGroups: source.trainingGroups || [],
+      settings: source.settings || {},
+      substitutions: source.substitutions || {},
+      welcomeAccepted: source.welcomeAccepted,
+      onboardingComplete: source.onboardingComplete,
+    },
+  };
+}
+
+function inflateCompactState(payload) {
+  const data = payload && payload.data;
+  if (!data || payload.format !== "aerstrong-compact-v1") return null;
+  const codeToExercise = new Map();
+  const exercises = (data.exercises || []).map((item) => {
+    const exerciseItem = exercise(item[1], item[2], item[3], item[4], item[5], [], item[0]);
+    codeToExercise.set(item[0], exerciseItem);
+    return exerciseItem;
+  });
+  exercises.forEach((exerciseItem, index) => {
+    const source = data.exercises[index] || [];
+    exerciseItem.alternatives = (source[6] || []).map((ref) => (codeToExercise.get(ref) && codeToExercise.get(ref).name) || ref);
+  });
+  const inflateItem = (item) => ({
+    id: item[0],
+    exerciseId: (codeToExercise.get(item[1]) && codeToExercise.get(item[1]).id) || item[1],
+    sets: item[2],
+    minReps: item[3],
+    maxReps: item[4],
+    weight: item[5],
+    increment: item[6],
+    rest: item[7],
+    targetReps: item[8] || [],
+  });
+  const inflateEntry = (entry) => ({
+    id: entry[0],
+    planItemId: entry[1],
+    exerciseId: (codeToExercise.get(entry[2]) && codeToExercise.get(entry[2]).id) || entry[2],
+    performedExerciseName: entry[3],
+    weight: entry[4],
+    reps: entry[5] || [],
+    completed: entry[6] || [],
+  });
+  return {
+    activeProfileId: data.activeProfileId,
+    profiles: data.profiles || [],
+    exercises,
+    templates: (data.templates || []).map((template) => ({
+      id: template.id,
+      profileId: template.p,
+      name: template.n,
+      group: template.g,
+      items: (template.i || []).map(inflateItem),
+    })),
+    schedule: (data.schedule || []).map((item) => ({ id: item[0], profileId: item[1], date: item[2], templateId: item[3], repeatWeekly: Boolean(item[4]) })),
+    scheduleMoves: (data.scheduleMoves || []).map((item) => ({ id: item[0], profileId: item[1], scheduleId: item[2], fromDate: item[3], toDate: item[4] })),
+    logs: (data.logs || []).map((log) => ({
+      id: log.id,
+      profileId: log.p,
+      date: log.d,
+      templateId: log.t,
+      templateName: log.tn,
+      scheduleKey: log.sk,
+      currentExerciseIndex: log.ci || 0,
+      currentSetIndex: log.cs || 0,
+      finishedAt: log.f,
+      archived: Boolean(log.a),
+      warmupChoice: log.wc,
+      warmupDone: Boolean(log.wd),
+      warmupSeconds: log.ws,
+      entries: (log.e || []).map(inflateEntry),
+    })),
+    health: data.health || [],
+    nutrition: data.nutrition || [],
+    nutritionSettings: data.nutritionSettings || [],
+    muscleGroups: data.muscleGroups || [],
+    trainingGroups: data.trainingGroups || [],
+    settings: data.settings || {},
+    substitutions: data.substitutions || {},
+    welcomeAccepted: data.welcomeAccepted,
+    onboardingComplete: data.onboardingComplete,
+  };
 }
 
 function importDataFile(file) {
@@ -3179,7 +3445,9 @@ function importDataFile(file) {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(String(reader.result || "{}"));
-      const imported = parsed.data || parsed;
+      const compactImport = inflateCompactState(parsed);
+      const isLegacyExport = !compactImport && parsed && parsed.format !== "aerstrong-compact-v1" && (parsed.data || parsed.storageKey || parsed.app === "AERSTRONG");
+      const imported = compactImport || parsed.data || parsed;
       if (!imported || !imported.exercises || !imported.templates) {
         updateDataStatus("Import refuse : ce fichier ne ressemble pas a une sauvegarde AERSTRONG.");
         return;
@@ -3190,13 +3458,42 @@ function importDataFile(file) {
       saveState();
       clearInterval(sessionUi.restTimer);
       sessionUi.phase = "ready";
-      updateDataStatus("Import termine. Les donnees ont ete restaurees sur ce telephone.");
+      updateDataStatus(isLegacyExport ? "Ancien format importe. Conversion compacte conseillee." : "Import termine. Les donnees ont ete restaurees sur ce telephone.");
       render();
+      if (isLegacyExport) {
+        showAppConfirm("Ancien format JSON detecte. Creer maintenant une nouvelle sauvegarde compacte adaptee a AERSTRONG ? L'ancien fichier ne peut pas etre supprime automatiquement, mais tu pourras le retirer apres.", () => {
+          downloadCompactExport("legacy-conversion");
+        }, "Convertir la sauvegarde", false, "Creer la nouvelle");
+      }
     } catch (error) {
       updateDataStatus("Import impossible : fichier illisible ou corrompu.");
     }
   };
   reader.readAsText(file);
+}
+
+function restoreLocalBackup() {
+  const backup = localStorage.getItem(backupStorageKey);
+  if (!backup) {
+    updateDataStatus("Aucune backup locale disponible pour le moment.");
+    return;
+  }
+  showAppConfirm("Restaurer la derniere backup locale ? Les donnees actuelles seront remplacees par l'etat precedent.", () => {
+    try {
+      const parsed = JSON.parse(backup);
+      const normalized = normalizeState(parsed);
+      rotateLocalBackup("before-restore");
+      Object.keys(state).forEach((key) => delete state[key]);
+      Object.assign(state, normalized);
+      localStorage.setItem(storageKey, JSON.stringify(state));
+      clearInterval(sessionUi.restTimer);
+      sessionUi.phase = "ready";
+      updateDataStatus("Backup locale restauree.");
+      render();
+    } catch {
+      updateDataStatus("Backup locale illisible. Restauration impossible.");
+    }
+  }, "Restaurer la backup", true, "Restaurer");
 }
 
 document.querySelector("main").addEventListener("click", (event) => {
@@ -3245,7 +3542,7 @@ if (legacyPplButton) {
 $("#openSettings").addEventListener("click", () => {
   updateVersionLabels();
   updatePwaStatus();
-  updateDataStatus();
+  renderSettingsStatus();
   previewSettings = { ...state.settings };
   $("#settingsTheme").value = state.settings.theme;
   $("#settingsMode").value = state.settings.mode || "dark";
@@ -3718,6 +4015,7 @@ $("#acceptWelcome").addEventListener("click", () => {
   saveState();
   $("#welcomeDialog").close();
   openOnboardingAfterWelcome();
+  maybeAskBackupProtection();
 });
 
 $("#learnMoreWelcome").addEventListener("click", () => {
@@ -3733,6 +4031,7 @@ $("#acceptAbout").addEventListener("click", () => {
     state.welcomeAccepted = true;
     saveState();
     openOnboardingAfterWelcome();
+    maybeAskBackupProtection();
   }
 });
 
@@ -3850,6 +4149,7 @@ function completeOnboarding(generateProgram) {
   saveState();
   $("#onboardingDialog").close();
   render();
+  maybeAskBackupProtection();
 }
 
 $("#onboardingForm").addEventListener("submit", (event) => {
@@ -3872,6 +4172,14 @@ $("#exportDataButton").addEventListener("click", () => {
 $("#importDataInput").addEventListener("change", (event) => {
   importDataFile(event.target.files && event.target.files[0]);
   event.target.value = "";
+});
+
+$("#protectStorageButton").addEventListener("click", () => {
+  requestPersistentStorage();
+});
+
+$("#restoreLocalBackupButton").addEventListener("click", () => {
+  restoreLocalBackup();
 });
 
 $("#checkUpdateButton").addEventListener("click", async () => {
@@ -3897,6 +4205,8 @@ $("#applyUpdateButton").addEventListener("click", () => {
     updatePwaStatus("Aucune mise a jour prete pour le moment.");
     return;
   }
+  rotateLocalBackup("pre-update");
+  updateDataStatus("Backup de securite creee avant mise a jour.");
   expectingUpdateReload = true;
   swRegistration.waiting.postMessage({ type: "SKIP_WAITING" });
 });
@@ -4753,8 +5063,21 @@ function maybeOpenOnboarding() {
   dialog.showModal();
 }
 
+function maybeAskBackupProtection() {
+  if (!state.welcomeAccepted || !state.onboardingComplete || state.settings.storageProtectionAsked) return;
+  window.setTimeout(() => {
+    if (document.querySelector("dialog[open]")) return;
+    showAppConfirm("Autoriser AERSTRONG a proteger les donnees locales de ce telephone ? Les sauvegardes automatiques resteront sur l'appareil.", () => {
+      requestPersistentStorage();
+    }, "Protection des donnees", false, "Autoriser");
+    state.settings.storageProtectionAsked = true;
+    saveState();
+  }, 800);
+}
+
 updateVersionLabels();
 registerServiceWorker();
 history.replaceState({ view: "home" }, "", window.location.pathname + window.location.search);
 render();
 maybeOpenOnboarding();
+maybeAskBackupProtection();

@@ -20,34 +20,44 @@
           <h1>Training System</h1>
           <p class="active-profile-chip" id="activeProfileName">Profil principal</p>
         </div>
-        <span class="version-badge" id="appVersionBadge">v1.7.0</span>
+        <span class="version-badge" id="appVersionBadge">v1.8.3</span>
         <button class="settings-button" id="openSettings" type="button" title="Options" aria-label="Options">⚙</button>
         <button class="icon-button" id="installButton" type="button" hidden title="Installer">Install</button>
       </header>
 
       <main>
-        <section class="view active" id="homeView">
+        <section class="view active home-view" id="homeView">
+          <div class="home-watermark" aria-hidden="true"></div>
           <div class="main-menu-head">
             <p class="label">Menu principal</p>
-            <h2>Choisis ton espace</h2>
+            <h2>AERSTRONG</h2>
+            <p>Prepare. Execute. Mesure.</p>
           </div>
           <section id="todayDashboard"></section>
           <div class="main-menu-grid" aria-label="Menu principal">
             <button class="main-menu-button training" data-view="planner" type="button">
+              <small>01</small>
               <span>Planning</span>
               <strong>Organiser la semaine et lancer une seance</strong>
+              <em>Aujourd'hui, semaine, deplacements</em>
             </button>
             <button class="main-menu-button builder" data-view="builder" type="button">
+              <small>02</small>
               <span>Builder</span>
               <strong>Creer, organiser et planifier</strong>
+              <em>Seances, exercices, modeles</em>
             </button>
             <button class="main-menu-button tracking" data-view="tracking" type="button">
+              <small>03</small>
               <span>Suivi</span>
               <strong>Profils, performances et mesures</strong>
+              <em>Coach, courbes, historique</em>
             </button>
             <button class="main-menu-button future" data-view="future" type="button">
+              <small>04</small>
               <span>Plus</span>
               <strong>Recovery et futures options</strong>
+              <em>Modules a venir</em>
             </button>
           </div>
         </section>
@@ -660,25 +670,50 @@
         <section class="settings-data-panel">
           <div class="item-head">
             <div>
-              <h3>Donnees et installation</h3>
-              <p class="muted-text" id="pwaStatus">Verification...</p>
+              <h3>Protection des donnees</h3>
+              <p class="muted-text" id="dataStatus">Les donnees restent sur ce telephone. Garde un export en securite.</p>
             </div>
-            <span class="status-pill" id="dataVersionPill">V5</span>
+            <span class="status-pill" id="dataVersionPill">Data V6</span>
           </div>
-          <div class="button-row">
-            <button class="small-button" id="checkUpdateButton" type="button">Verifier mise a jour</button>
-            <button class="small-button update-button" id="applyUpdateButton" type="button" hidden>Installer la mise a jour</button>
-          </div>
-          <div class="button-row">
-            <button class="small-button" id="exportDataButton" type="button">Exporter mes donnees</button>
-            <label class="small-button file-button">
-              Importer
-              <input id="importDataInput" type="file" accept="application/json,.json" hidden>
-            </label>
-          </div>
-          <button class="small-button" id="openAbout" type="button">À propos d'AERSTRONG</button>
-          <p class="backup-reminder">Sauvegarde conseillee apres plusieurs seances : les donnees restent sur cet appareil.</p>
-          <p class="muted-text" id="dataStatus">Les donnees restent sur ce telephone. Garde un export en securite.</p>
+          <article class="settings-action-card recommended" id="storageProtectionCard">
+            <div>
+              <span>Securite automatique</span>
+              <strong id="storageProtectionTitle">Activer la protection locale</strong>
+              <p id="storageProtectionText">Demande au telephone de conserver les donnees AERSTRONG et garde une backup precedente en cas d'erreur.</p>
+            </div>
+            <button class="small-button update-button" id="protectStorageButton" type="button">Activer</button>
+          </article>
+          <article class="settings-action-card">
+            <div>
+              <span>Sauvegarde fichier</span>
+              <strong>Exporter ou importer</strong>
+              <p>Cree un fichier compact a garder hors de l'app, utile avant une grosse mise a jour ou un changement de telephone.</p>
+            </div>
+            <div class="settings-action-buttons">
+              <button class="small-button" id="exportDataButton" type="button">Exporter</button>
+              <label class="small-button file-button">
+                Importer
+                <input id="importDataInput" type="file" accept="application/json,.json,.aerstrong.json" hidden>
+              </label>
+            </div>
+          </article>
+          <article class="settings-action-card">
+            <div>
+              <span>Retour de secours</span>
+              <strong>Restaurer la derniere backup</strong>
+              <p>Revient a l'etat juste avant la derniere modification sauvegardee sur ce telephone.</p>
+            </div>
+            <button class="small-button" id="restoreLocalBackupButton" type="button">Restaurer</button>
+          </article>
+          <details class="settings-more">
+            <summary>Installation et mise a jour</summary>
+            <p class="muted-text" id="pwaStatus">Verification...</p>
+            <div class="button-row">
+              <button class="small-button" id="checkUpdateButton" type="button">Verifier</button>
+              <button class="small-button update-button" id="applyUpdateButton" type="button" hidden>Installer</button>
+            </div>
+          </details>
+          <button class="small-button" id="openAbout" type="button">A propos d'AERSTRONG</button>
         </section>
         <button class="primary-button" type="submit">Sauver</button>
         <button class="small-button" value="cancel">Fermer</button>
