@@ -1,7 +1,8 @@
 const storageKey = "forgefit-v4";
 const backupStorageKey = `${storageKey}-backup`;
 const backupMetaKey = `${storageKey}-backup-meta`;
-const appVersion = "v1.8.3";
+const protectionPromptKey = `${storageKey}-storage-protection-asked`;
+const appVersion = "v1.8.4";
 const dataSchemaVersion = 6;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -303,6 +304,8 @@ function normalizeState(saved) {
   }];
   const activeProfileId = profiles.some((profile) => profile.id === saved.activeProfileId) ? saved.activeProfileId : profiles[0].id;
   const templates = (saved.templates || base.templates).map((item) => ({ ...item, profileId: item.profileId || activeProfileId, group: item.group || "General" }));
+  const settings = migratedSettings(saved);
+  settings.storageProtectionAsked = Boolean(settings.storageProtectionAsked || localStorage.getItem(protectionPromptKey) === "1");
   return {
     ...starterState(),
     ...saved,
@@ -318,7 +321,7 @@ function normalizeState(saved) {
     nutritionSettings: (saved.nutritionSettings || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     muscleGroups: normalizeMuscleGroups(saved.muscleGroups, mergedExercises),
     trainingGroups: normalizeTrainingGroups(saved.trainingGroups, templates),
-    settings: migratedSettings(saved),
+    settings,
     substitutions: saved.substitutions || {},
     dataVersion: dataSchemaVersion,
     welcomeAccepted: saved.welcomeAccepted === undefined ? true : saved.welcomeAccepted,
@@ -742,6 +745,7 @@ function backupInfo() {
 }
 
 async function requestPersistentStorage() {
+  localStorage.setItem(protectionPromptKey, "1");
   if (!navigator.storage || !navigator.storage.persist) {
     state.settings.storageProtectionAsked = true;
     state.settings.storagePersistent = false;
@@ -779,13 +783,9 @@ function workoutHistoryKey(log) {
 }
 
 function pruneWorkoutHistory() {
-  const keepIds = new Set();
   const grouped = new Map();
   state.logs.forEach((log) => {
-    if (!log.finishedAt || log.archived || completedSetCount(log) === 0) {
-      keepIds.add(log.id);
-      return;
-    }
+    if (!log.finishedAt || completedSetCount(log) === 0) return;
     const key = `${log.profileId}:${workoutHistoryKey(log)}`;
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(log);
@@ -793,10 +793,12 @@ function pruneWorkoutHistory() {
   grouped.forEach((logs) => {
     logs
       .sort((a, b) => new Date(b.finishedAt || b.date) - new Date(a.finishedAt || a.date))
-      .slice(0, 2)
-      .forEach((log) => keepIds.add(log.id));
+      .forEach((log, index) => {
+        log.archived = index >= 2;
+        if (log.archived && !log.archivedAt) log.archivedAt = new Date().toISOString();
+        if (!log.archived) delete log.archivedAt;
+      });
   });
-  state.logs = state.logs.filter((log) => keepIds.has(log.id));
 }
 
 function applySettings() {
@@ -835,16 +837,16 @@ function playTimerBeep(kind) {
   const compressor = context.createDynamicsCompressor();
   const final = kind === "done";
   const now = context.currentTime;
-  oscillator.type = final ? "square" : "triangle";
-  oscillator.frequency.setValueAtTime(final ? 1480 : 980, now);
+  oscillator.type = "square";
+  oscillator.frequency.setValueAtTime(final ? 1480 : 1320, now);
   gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(0.75, now + 0.01);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + (final ? 0.42 : 0.18));
+  gain.gain.exponentialRampToValueAtTime(final ? 0.75 : 0.9, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + (final ? 0.42 : 0.3));
   oscillator.connect(gain);
   gain.connect(compressor);
   compressor.connect(context.destination);
   oscillator.start(now);
-  oscillator.stop(now + (final ? 0.44 : 0.2));
+  oscillator.stop(now + (final ? 0.44 : 0.32));
 }
 
 function handleTimerSound(remaining) {
@@ -3347,6 +3349,8 @@ function compactStateExport(source) {
         cs: log.currentSetIndex,
         f: log.finishedAt,
         a: log.archived ? 1 : 0,
+        aa: log.archivedAt,
+        m: log.manual ? 1 : 0,
         wc: log.warmupChoice,
         wd: log.warmupDone ? 1 : 0,
         ws: log.warmupSeconds,
@@ -3422,6 +3426,8 @@ function inflateCompactState(payload) {
       currentSetIndex: log.cs || 0,
       finishedAt: log.f,
       archived: Boolean(log.a),
+      archivedAt: log.aa,
+      manual: Boolean(log.m),
       warmupChoice: log.wc,
       warmupDone: Boolean(log.wd),
       warmupSeconds: log.ws,
@@ -5064,13 +5070,14 @@ function maybeOpenOnboarding() {
 }
 
 function maybeAskBackupProtection() {
-  if (!state.welcomeAccepted || !state.onboardingComplete || state.settings.storageProtectionAsked) return;
+  if (!state.welcomeAccepted || !state.onboardingComplete || state.settings.storageProtectionAsked || localStorage.getItem(protectionPromptKey) === "1") return;
   window.setTimeout(() => {
     if (document.querySelector("dialog[open]")) return;
     showAppConfirm("Autoriser AERSTRONG a proteger les donnees locales de ce telephone ? Les sauvegardes automatiques resteront sur l'appareil.", () => {
       requestPersistentStorage();
     }, "Protection des donnees", false, "Autoriser");
     state.settings.storageProtectionAsked = true;
+    localStorage.setItem(protectionPromptKey, "1");
     saveState();
   }, 800);
 }
