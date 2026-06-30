@@ -2,7 +2,7 @@ const storageKey = "forgefit-v4";
 const backupStorageKey = `${storageKey}-backup`;
 const backupMetaKey = `${storageKey}-backup-meta`;
 const protectionPromptKey = `${storageKey}-storage-protection-asked`;
-const appVersion = "v1.9.4";
+const appVersion = "v1.9.5";
 const dataSchemaVersion = 8;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -1623,10 +1623,26 @@ function normalizeFrenchTextForLookup(value) {
 function translateKnownText(text) {
   if (!text || !String(text).trim()) return text;
   const maps = isEnglish() ? [englishTextMap, exerciseEnglishNames] : [frenchFromEnglishTextMap, frenchFromEnglishExerciseMap];
-  let output = isEnglish() ? normalizeFrenchTextForLookup(text) : String(text);
+  const original = String(text);
+  const leading = original.match(/^\s*/)[0];
+  const trailing = original.match(/\s*$/)[0];
+  const core = original.trim();
+  const lookup = isEnglish() ? normalizeFrenchTextForLookup(core) : core;
+  for (const map of maps) {
+    if (map.has(lookup)) return `${leading}${map.get(lookup)}${trailing}`;
+  }
+  if (!isEnglish()) return original;
+
+  let output = normalizeFrenchTextForLookup(original);
   maps.forEach((map) => {
     [...map.entries()].sort((a, b) => b[0].length - a[0].length).forEach(([source, target]) => {
-      output = output.split(source).join(target);
+      const escaped = source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (/[\p{L}\p{N}]/u.test(source[0]) && /[\p{L}\p{N}]/u.test(source[source.length - 1])) {
+        const pattern = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "gu");
+        output = output.replace(pattern, (match, prefix) => `${prefix}${target}`);
+        return;
+      }
+      output = output.replace(new RegExp(escaped, "gu"), target);
     });
   });
   return output;
