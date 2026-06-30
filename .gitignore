@@ -1,0 +1,7 @@
+.codex/
+.agents/
+.codex-remote-attachments/
+*.zip
+server-error.log
+Thumbs.db
+.DS_Store
