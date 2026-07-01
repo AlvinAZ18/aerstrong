@@ -2,7 +2,7 @@ const storageKey = "forgefit-v4";
 const backupStorageKey = `${storageKey}-backup`;
 const backupMetaKey = `${storageKey}-backup-meta`;
 const protectionPromptKey = `${storageKey}-storage-protection-asked`;
-const appVersion = "v1.9.7";
+const appVersion = "v1.9.8";
 const dataSchemaVersion = 8;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -5778,11 +5778,21 @@ $("#workoutLogEditForm").addEventListener("submit", (event) => {
   }
   log.date = $("#workoutLogEditDate").value || log.date;
   document.querySelectorAll("[data-edit-log-entry]").forEach((row) => {
-    const entry = log.entries.find((item) => item.id === row.dataset.editLogEntry);
+    const planItem = templateById(log.templateId) && templateById(log.templateId).items.find((item) => item.id === row.dataset.editLogPlan);
+    if (row.querySelector("[data-edit-log-skipped]").checked) {
+      if (planItem) markExerciseSkipped(log, planItem);
+      return;
+    }
+    if (planItem) log.skippedExercises = (log.skippedExercises || []).filter((idValue) => idValue !== planItem.id);
+    let entry = log.entries.find((item) => item.id === row.dataset.editLogEntry || item.planItemId === row.dataset.editLogPlan);
+    if (!entry && planItem) {
+      entry = createEntryForPlanItem(planItem);
+      log.entries.push(entry);
+    }
     if (!entry) return;
     entry.weight = fromDisplayWeight(row.querySelector("[data-edit-log-weight]").value || 0);
-    const reps = row.querySelector("[data-edit-log-reps]").value.split(/[\/,; ]+/).filter(Boolean).map((value) => Number(value || 0));
-    const weights = row.querySelector("[data-edit-log-weights]").value.split(/[\/,; ]+/).filter(Boolean).map((value) => fromDisplayWeight(value));
+    const reps = splitSeriesText(row.querySelector("[data-edit-log-reps]").value).map((value) => Number(value || 0));
+    const weights = splitSeriesText(row.querySelector("[data-edit-log-weights]").value).map((value) => fromDisplayWeight(value));
     entry.reps = reps;
     entry.weights = reps.map((value, index) => Number.isFinite(weights[index]) && weights[index] > 0 ? weights[index] : entry.weight);
     entry.completed = reps.map((value) => value > 0);
@@ -5797,6 +5807,25 @@ $("#workoutLogEditTemplate").addEventListener("change", () => {
   if ($("#workoutLogEditId").value) return;
   const draft = buildManualLogFromTemplate($("#workoutLogEditTemplate").value);
   $("#workoutLogEditEntries").innerHTML = logEditEntryRows(draft);
+});
+
+$("#workoutLogEditEntries").addEventListener("input", (event) => {
+  const repsInput = event.target.closest("[data-edit-log-reps]");
+  const weightsInput = event.target.closest("[data-edit-log-weights]");
+  if (!repsInput && !weightsInput) return;
+  const row = event.target.closest("[data-edit-log-entry]");
+  const sets = Number(row && row.dataset.editLogSets || 0);
+  if (repsInput) repsInput.value = formatSeriesInputValue(repsInput.value, sets, "reps");
+  if (weightsInput) weightsInput.value = formatSeriesInputValue(weightsInput.value, sets, "weights");
+});
+
+$("#workoutLogEditEntries").addEventListener("change", (event) => {
+  const skipped = event.target.closest("[data-edit-log-skipped]");
+  if (!skipped) return;
+  const row = skipped.closest("[data-edit-log-entry]");
+  row.querySelectorAll("[data-edit-log-weight], [data-edit-log-weights], [data-edit-log-reps]").forEach((input) => {
+    input.disabled = skipped.checked;
+  });
 });
 
 $("#workoutLogActionEdit").addEventListener("click", () => {
@@ -5898,13 +5927,54 @@ function fillHealthForm(item) {
   $("#healthWeight").focus();
 }
 
+function splitSeriesText(value) {
+  return String(value || "").split(/[\/,; -]+/).filter(Boolean);
+}
+
+function formatSeriesInputValue(value, sets, mode = "reps") {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/[\/,; -]/.test(text)) return splitSeriesText(text).join("/");
+  const clean = text.replace(/[^\d.]/g, "");
+  if (!clean || !sets) return clean;
+  if (mode === "reps" && clean.length <= sets) return clean.split("").join("/");
+  if (clean.length === sets * 2) {
+    const chunks = [];
+    for (let index = 0; index < clean.length; index += 2) chunks.push(clean.slice(index, index + 2));
+    return chunks.join("/");
+  }
+  return clean;
+}
+
+function createEntryForPlanItem(item) {
+  const exerciseItem = exerciseById(item.exerciseId);
+  return {
+    id: id(),
+    planItemId: item.id,
+    exerciseId: item.exerciseId,
+    performedExerciseName: (exerciseItem && exerciseItem.name) || "Exercice",
+    weight: item.weight,
+    weights: Array(item.sets).fill(item.weight),
+    reps: Array(item.sets).fill(item.minReps),
+    completed: Array(item.sets).fill(true),
+  };
+}
+
 function logEditEntryRows(log) {
-  return (log.entries || []).map((entry) => `
-    <article class="item-card compact-form" data-edit-log-entry="${entry.id}">
+  const template = templateById(log.templateId);
+  const rows = template && template.items && template.items.length
+    ? template.items.map((item) => {
+      const entry = (log.entries || []).find((candidate) => candidate.planItemId === item.id) || createEntryForPlanItem(item);
+      return { item, entry, skipped: isExerciseSkipped(log, item) };
+    })
+    : (log.entries || []).map((entry) => ({ item: { id: entry.planItemId, sets: (entry.reps || []).length || 1 }, entry, skipped: false }));
+  return rows.map(({ item, entry, skipped }) => `
+    <article class="item-card compact-form ${skipped ? "is-skipped" : ""}" data-edit-log-entry="${entry.id}" data-edit-log-plan="${escapeHtml(item.id || entry.planItemId || "")}" data-edit-log-sets="${Number(item.sets || (entry.reps || []).length || 1)}">
       <strong>${escapeHtml(displayExerciseName(entry.performedExerciseName || "Exercice"))}</strong>
-      <label>Poids ${weightUnit()}<input data-edit-log-weight inputmode="decimal" type="number" step="0.5" value="${escapeHtml(weightInputValue(entry.weight || 0))}"></label>
-      <label>Poids par serie ${weightUnit()}<input data-edit-log-weights inputmode="decimal" value="${escapeHtml((entry.weights || []).map((weight) => weightInputValue(weight)).join("/"))}" placeholder="90/90/87.5/85"></label>
-      <label>Reps par serie<input data-edit-log-reps inputmode="numeric" value="${escapeHtml((entry.reps || []).join("/"))}" placeholder="8/8/8/8"></label>
+      <label class="check-row"><input data-edit-log-skipped type="checkbox" ${skipped ? "checked" : ""}> Exercice saute</label>
+      <label>Poids ${weightUnit()}<input data-edit-log-weight inputmode="decimal" type="number" step="0.5" value="${escapeHtml(weightInputValue(entry.weight || 0))}" ${skipped ? "disabled" : ""}></label>
+      <label>Poids par serie ${weightUnit()}<input data-edit-log-weights inputmode="decimal" value="${escapeHtml((entry.weights || []).map((weight) => weightInputValue(weight)).join("/"))}" placeholder="90/90/87.5/85" ${skipped ? "disabled" : ""}></label>
+      <label>Reps par serie<input data-edit-log-reps inputmode="numeric" value="${escapeHtml((entry.reps || []).join("/"))}" placeholder="8/8/8/8" ${skipped ? "disabled" : ""}></label>
     </article>
   `).join("") || `<p class="empty">Aucune performance dans cette seance.</p>`;
 }
@@ -5916,19 +5986,7 @@ function buildManualLogFromTemplate(templateId) {
     profileId: state.activeProfileId,
     date: todayKey,
     templateId,
-    entries: template ? template.items.map((item) => {
-      const exerciseItem = exerciseById(item.exerciseId);
-      return {
-        id: id(),
-        planItemId: item.id,
-        exerciseId: item.exerciseId,
-        performedExerciseName: (exerciseItem && exerciseItem.name) || "Exercice",
-        weight: item.weight,
-        weights: Array(item.sets).fill(item.weight),
-        reps: Array(item.sets).fill(item.minReps),
-        completed: Array(item.sets).fill(true),
-      };
-    }) : [],
+    entries: template ? template.items.map(createEntryForPlanItem) : [],
     currentExerciseIndex: 0,
     currentSetIndex: 0,
     skippedExercises: [],
