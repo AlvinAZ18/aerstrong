@@ -2,7 +2,7 @@ const storageKey = "forgefit-v4";
 const backupStorageKey = `${storageKey}-backup`;
 const backupMetaKey = `${storageKey}-backup-meta`;
 const protectionPromptKey = `${storageKey}-storage-protection-asked`;
-const appVersion = "v1.9.9";
+const appVersion = "v1.9.10";
 const dataSchemaVersion = 8;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -5792,7 +5792,7 @@ $("#workoutLogEditForm").addEventListener("submit", (event) => {
     if (!entry) return;
     entry.weight = fromDisplayWeight(row.querySelector("[data-edit-log-weight]").value || 0);
     const reps = splitSeriesText(row.querySelector("[data-edit-log-reps]").value).map((value) => Number(value || 0));
-    const weights = splitSeriesText(row.querySelector("[data-edit-log-weights]").value).map((value) => fromDisplayWeight(value));
+    const weights = splitWeightSeriesText(row.querySelector("[data-edit-log-weights]").value).map((value) => fromDisplayWeight(value));
     entry.reps = reps;
     entry.weights = reps.map((value, index) => Number.isFinite(weights[index]) && weights[index] > 0 ? weights[index] : entry.weight);
     entry.completed = reps.map((value) => value > 0);
@@ -5826,9 +5826,21 @@ $("#workoutLogEditEntries").addEventListener("input", (event) => {
   if (weightsInput) weightsInput.value = formatSeriesInputValue(weightsInput.value, sets, "weights");
 });
 
+$("#workoutLogEditEntries").addEventListener("pointerdown", (event) => {
+  const charButton = event.target.closest("[data-series-char]");
+  if (!charButton) return;
+  event.preventDefault();
+  insertSeriesChar(charButton);
+});
+
 $("#workoutLogEditEntries").addEventListener("click", (event) => {
   const charButton = event.target.closest("[data-series-char]");
   if (!charButton) return;
+  if (event.detail) return;
+  insertSeriesChar(charButton);
+});
+
+function insertSeriesChar(charButton) {
   const row = charButton.closest("[data-edit-log-entry]");
   const pad = charButton.closest("[data-series-target]");
   const targetSelector = pad && pad.dataset.seriesTarget === "weights" ? "[data-edit-log-weights]" : "[data-edit-log-reps]";
@@ -5843,7 +5855,7 @@ $("#workoutLogEditEntries").addEventListener("click", (event) => {
   active.focus();
   active.setSelectionRange(start + char.length, start + char.length);
   active.dispatchEvent(new Event("input", { bubbles: true }));
-});
+}
 
 $("#workoutLogEditEntries").addEventListener("change", (event) => {
   const skipped = event.target.closest("[data-edit-log-skipped]");
@@ -5957,11 +5969,18 @@ function splitSeriesText(value) {
   return String(value || "").split(/[\/,; -]+/).filter(Boolean);
 }
 
+function splitWeightSeriesText(value) {
+  return String(value || "").replace(/[; -]+/g, "/").split(/[\/]+/).filter(Boolean);
+}
+
 function formatSeriesInputValue(value, sets, mode = "reps") {
   const text = String(value || "").trim();
   if (!text) return "";
-  if (/[\/,; -]/.test(text)) return splitSeriesText(text).join("/");
-  const clean = text.replace(/[^\d.]/g, "");
+  const allowed = mode === "weights"
+    ? text.replace(/[^\d.,\/; -]/g, "").replace(/;/g, "/")
+    : text.replace(/[^\d\/,; -]/g, "");
+  if (/[\/,; -]/.test(text) || (mode === "weights" && /[.,]/.test(text))) return allowed;
+  const clean = allowed.replace(/[^\d.]/g, "");
   if (!clean || !sets) return clean;
   if (mode === "reps" && clean.length <= sets) return clean.split("").join("/");
   return clean;
