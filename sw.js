@@ -1,4 +1,4 @@
-const cacheName = "aerstrong-v78";
+const cacheName = "aerstrong-v79";
 const files = [
   "./",
   "./index.html",

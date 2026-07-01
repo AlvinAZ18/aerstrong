@@ -2,7 +2,7 @@ const storageKey = "forgefit-v4";
 const backupStorageKey = `${storageKey}-backup`;
 const backupMetaKey = `${storageKey}-backup-meta`;
 const protectionPromptKey = `${storageKey}-storage-protection-asked`;
-const appVersion = "v1.9.5";
+const appVersion = "v1.9.6";
 const dataSchemaVersion = 8;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -316,7 +316,14 @@ function normalizeState(saved) {
     templates,
     schedule: (saved.schedule || base.schedule).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     scheduleMoves: (saved.scheduleMoves || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
-    logs: (saved.logs || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
+    logs: (saved.logs || []).map((item) => ({
+      ...item,
+      profileId: item.profileId || activeProfileId,
+      entries: (item.entries || []).map((entry) => ({
+        ...entry,
+        weights: entry.weights || (entry.reps || []).map(() => entry.weight || 0),
+      })),
+    })),
     health: (saved.health || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     nutrition: (saved.nutrition || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
     nutritionSettings: (saved.nutritionSettings || []).map((item) => ({ ...item, profileId: item.profileId || activeProfileId })),
@@ -1866,6 +1873,7 @@ function entryFor(log, item) {
       exerciseId: item.exerciseId,
       performedExerciseName: (exerciseById(item.exerciseId) && exerciseById(item.exerciseId).name) || "Exercice",
       weight: item.weight,
+      weights: Array(item.sets).fill(item.weight),
       reps: Array(item.sets).fill(""),
       completed: Array(item.sets).fill(false),
     };
@@ -1873,6 +1881,8 @@ function entryFor(log, item) {
   }
   if (!entry.completed) entry.completed = Array(item.sets).fill(false);
   if (!entry.reps) entry.reps = Array(item.sets).fill("");
+  if (!entry.weights) entry.weights = Array(item.sets).fill(entry.weight || item.weight || 0);
+  while (entry.weights.length < item.sets) entry.weights.push(entry.weight || item.weight || 0);
   return entry;
 }
 
@@ -1897,7 +1907,8 @@ function persistActiveTrainingInputs() {
     const weight = fromDisplayWeight(weightInput.value);
     if (Number.isFinite(weight)) {
       entry.weight = weight;
-      item.weight = weight;
+      if (!entry.weights) entry.weights = Array(item.sets).fill(item.weight || weight);
+      entry.weights[setIndex] = weight;
     }
   }
 }
@@ -1907,7 +1918,14 @@ function propagateFutureSetValues(entry, setIndex, reps, weight) {
     if (entry.completed && entry.completed[index]) continue;
     entry.reps[index] = reps;
   }
-  if (Number.isFinite(weight)) entry.weight = weight;
+  if (Number.isFinite(weight)) {
+    entry.weight = weight;
+    if (!entry.weights) entry.weights = Array(entry.reps.length).fill(weight);
+    for (let index = setIndex; index < entry.weights.length; index += 1) {
+      if (entry.completed && entry.completed[index]) continue;
+      entry.weights[index] = weight;
+    }
+  }
 }
 
 function profileNameById(profileId) {
@@ -1948,13 +1966,71 @@ function completedSetCount(log) {
   return (log.entries || []).reduce((total, entry) => total + ((entry.completed || []).filter(Boolean).length), 0);
 }
 
+function entryWeightAt(entry, index, fallback = 0) {
+  const value = entry && entry.weights && entry.weights[index] !== undefined ? entry.weights[index] : entry && entry.weight;
+  const weight = Number(value);
+  return Number.isFinite(weight) && weight > 0 ? weight : Number(fallback || 0);
+}
+
+function completedSetRows(entry, item = {}) {
+  return (entry.reps || [])
+    .map((rep, index) => ({
+      index,
+      reps: Number(rep || 0),
+      weight: entryWeightAt(entry, index, item.weight),
+      completed: !entry.completed || !!entry.completed[index],
+    }))
+    .filter((row) => row.completed && row.reps > 0 && row.weight > 0);
+}
+
+function normalizedTargetReps(item, sets = item.sets || 0) {
+  const source = Array.isArray(item.targetReps) && item.targetReps.length ? item.targetReps : Array(sets).fill(item.minReps || 8);
+  return Array.from({ length: sets }, (_, index) => Number(source[index] || item.minReps || 8));
+}
+
+function nextTargetFromEntry(item, entry) {
+  const rows = completedSetRows(entry, item);
+  const sets = Number(item.sets || rows.length || 1);
+  const minReps = Number(item.minReps || 8);
+  const maxReps = Number(item.maxReps || Math.max(minReps, 12));
+  const increment = Number(item.increment || 2.5);
+  const currentTargets = normalizedTargetReps(item, sets);
+  const fallbackWeight = Number(item.weight || entry.weight || 0);
+  if (!rows.length) return { weight: fallbackWeight, targetReps: currentTargets, reason: "objectif a consolider", rows };
+
+  const completedAllSets = rows.length >= sets;
+  const setWeights = rows.map((row) => row.weight);
+  const bestRow = rows.reduce((best, row) => estimateOneRm(row.weight, row.reps) > estimateOneRm(best.weight, best.reps) ? row : best, rows[0]);
+  const sustainableRows = rows.filter((row) => row.reps >= minReps);
+  const sustainableWeight = sustainableRows.length ? Math.min(...sustainableRows.map((row) => row.weight)) : Math.min(...setWeights);
+  const referenceWeight = sustainableWeight || fallbackWeight;
+  const sameWeight = setWeights.every((weight) => Math.abs(weight - setWeights[0]) < 0.001);
+  const hitTargets = completedAllSets && rows.slice(0, sets).every((row, index) => row.reps >= currentTargets[index]);
+  const hitTopRange = completedAllSets && rows.slice(0, sets).every((row) => row.reps >= maxReps);
+
+  if (completedAllSets && sameWeight && hitTopRange) {
+    return { weight: referenceWeight + increment, targetReps: Array(sets).fill(minReps), reason: "haut de fourchette atteint", rows, bestRow };
+  }
+  if (completedAllSets && sameWeight && hitTargets) {
+    return { weight: referenceWeight, targetReps: currentTargets.map((rep) => Math.min(maxReps, rep + 1)), reason: "objectif valide", rows, bestRow };
+  }
+  if (completedAllSets && !sameWeight && rows.every((row) => row.reps >= minReps)) {
+    return { weight: referenceWeight, targetReps: Array(sets).fill(minReps), reason: "charge ajustee", rows, bestRow };
+  }
+  if (!completedAllSets || rows.some((row) => row.reps < minReps)) {
+    return { weight: referenceWeight || fallbackWeight, targetReps: Array(sets).fill(minReps), reason: "plateau", rows, bestRow };
+  }
+  return { weight: referenceWeight || fallbackWeight, targetReps: currentTargets, reason: "objectif a consolider", rows, bestRow };
+}
+
 function nextTarget(item, repsDone) {
-  const reps = repsDone.map((value) => Number(value || 0));
-  const complete = reps.length === item.sets && reps.every((rep) => rep >= item.maxReps);
-  const allHit = reps.length === item.sets && reps.every((rep, index) => rep >= item.targetReps[index]);
-  if (complete) return { weight: item.weight + Number(item.increment || 0), targetReps: Array(item.sets).fill(item.minReps), reason: "haut de fourchette atteint" };
-  if (allHit) return { weight: item.weight, targetReps: item.targetReps.map((rep) => Math.min(item.maxReps, rep + 1)), reason: "objectif valide" };
-  return { weight: item.weight, targetReps: item.targetReps, reason: "objectif a consolider" };
+  const entry = {
+    weight: item.weight,
+    weights: Array(item.sets).fill(item.weight),
+    reps: repsDone,
+    completed: Array((repsDone || []).length).fill(true),
+  };
+  return nextTargetFromEntry(item, entry);
 }
 
 function estimateOneRm(weight, reps) {
@@ -2119,8 +2195,8 @@ function logStats(log) {
   const template = templateById(log.templateId);
   const perExercise = template && template.items ? template.items.map((item) => {
     const entry = log.entries.find((candidate) => candidate.planItemId === item.id) || entryFor(log, item);
-    const reps = entry.reps.map((rep) => Number(rep || 0));
-    const tonnage = reps.reduce((total, rep) => total + rep * Number(entry.weight || 0), 0);
+    const rows = completedSetRows(entry, item);
+    const tonnage = rows.reduce((total, row) => total + row.reps * row.weight, 0);
     const calories = Math.round((tonnage * 0.012) + ((entry.completed || []).filter(Boolean).length * 4));
     return { name: entry.performedExerciseName, tonnage, calories };
   }) : [];
@@ -2565,7 +2641,8 @@ function planItemForEntry(log, entry) {
 function coachSuggestionFromEntry(log, entry, item) {
   const exercise = exerciseById((item && item.exerciseId) || entry.exerciseId);
   const exerciseName = (exercise && exercise.name) || entry.performedExerciseName || "Exercice";
-  const reps = (entry.reps || []).filter((rep, index) => !entry.completed || entry.completed[index]).map((rep) => Number(rep || 0));
+  const rows = completedSetRows(entry, item || {});
+  const reps = rows.map((row) => row.reps);
   const safeReps = reps.length ? reps : [0];
   const targetItem = item || {
     sets: safeReps.length,
@@ -2575,15 +2652,16 @@ function coachSuggestionFromEntry(log, entry, item) {
     increment: 2.5,
     targetReps: safeReps,
   };
-  const next = nextTarget(targetItem, reps);
+  const next = nextTargetFromEntry(targetItem, entry);
   const template = templateById(log.templateId);
   const context = template ? ` (${template.name})` : "";
+  const setSummary = next.rows && next.rows.length ? ` Derniere seance : ${next.rows.map((row) => `${fmtWeight(row.weight)} x ${row.reps}`).join(" / ")}.` : "";
   if (next.reason === "haut de fourchette atteint") {
     return {
       type: "Augmenter",
       family: exercise && exercise.family,
       templateId: log.templateId,
-      text: `${exerciseName}${context} : haut de fourchette valide. Vise ${fmtWeight(next.weight)} sur ${next.targetReps.join("/")}.`,
+      text: `${exerciseName}${context} : haut de fourchette valide.${setSummary} Vise ${fmtWeight(next.weight)} sur ${next.targetReps.join("/")}.`,
     };
   }
   if (next.reason === "objectif valide") {
@@ -2591,14 +2669,30 @@ function coachSuggestionFromEntry(log, entry, item) {
       type: "Progression",
       family: exercise && exercise.family,
       templateId: log.templateId,
-      text: `${exerciseName}${context} : objectif valide. Prochaine cible : ${next.targetReps.join("/")}.`,
+      text: `${exerciseName}${context} : objectif valide.${setSummary} Garde ${fmtWeight(next.weight)} et vise ${next.targetReps.join("/")}.`,
+    };
+  }
+  if (next.reason === "charge ajustee") {
+    return {
+      type: "Stabiliser",
+      family: exercise && exercise.family,
+      templateId: log.templateId,
+      text: `${exerciseName}${context} : charge modifiee pendant l'exercice.${setSummary} Stabilise ${fmtWeight(next.weight)} sur ${next.targetReps.join("/")}.`,
+    };
+  }
+  if (next.reason === "plateau") {
+    return {
+      type: "Plateau",
+      family: exercise && exercise.family,
+      templateId: log.templateId,
+      text: `${exerciseName}${context} : objectif non complet.${setSummary} Repars sur ${fmtWeight(next.weight)} et valide ${next.targetReps.join("/")}.`,
     };
   }
   return {
     type: "Consolider",
     family: exercise && exercise.family,
     templateId: log.templateId,
-    text: `${exerciseName}${context} : garde la charge et consolide ${next.targetReps.join("/")}.`,
+    text: `${exerciseName}${context} : garde ${fmtWeight(next.weight)} et consolide ${next.targetReps.join("/")}.`,
   };
 }
 
@@ -2880,7 +2974,7 @@ function renderTraining() {
         <span>${t("exercise")} ${progress}</span>
       </div>
       <h2>${escapeHtml(entry.performedExerciseName)}</h2>
-      <p>${escapeHtml(exercise && exercise.family)} - ${escapeHtml(exercise && exercise.equipment)} - ${fmtWeight(entry.weight)}</p>
+      <p>${escapeHtml(exercise && exercise.family)} - ${escapeHtml(exercise && exercise.equipment)} - ${fmtWeight(entryWeightAt(entry, log.currentSetIndex, item.weight))}</p>
     </section>
 
     <section class="set-status-row">
@@ -2900,7 +2994,7 @@ function renderTraining() {
         ${sessionUi.phase === "rest" ? `<button class="timer-adjust" data-rest-adjust="5" type="button">+5</button>` : ""}
       </div>
       <input class="rep-input" id="activeRepInput" inputmode="numeric" type="number" min="0" value="${escapeHtml(entry.reps[setIndex] || target)}" aria-label="Reps realisees">
-      <input class="rep-input weight-input" id="activeWeightInput" inputmode="decimal" type="number" min="0" step="0.5" value="${escapeHtml(weightInputValue(entry.weight || item.weight || 0))}" aria-label="Charge utilisee">
+      <input class="rep-input weight-input" id="activeWeightInput" inputmode="decimal" type="number" min="0" step="0.5" value="${escapeHtml(weightInputValue(entryWeightAt(entry, log.currentSetIndex, item.weight)))}" aria-label="Charge utilisee">
       <button class="go-button ${sessionUi.phase === "rest" ? "resting" : ""}" id="goButton" type="button">${sessionUi.phase === "rest" ? t("skip") : "GO"}</button>
     </section>
 
@@ -3000,7 +3094,7 @@ function renderTogetherProfileCard(profileId, template) {
         <span>${t("exercise")} ${progress}</span>
       </div>
       <h2>${escapeHtml(entry.performedExerciseName)}</h2>
-      <p>${escapeHtml(exercise && exercise.family)} - ${fmtWeight(entry.weight)}</p>
+      <p>${escapeHtml(exercise && exercise.family)} - ${fmtWeight(entryWeightAt(entry, log.currentSetIndex, item.weight))}</p>
       <div class="mini-set-row">
         ${entry.completed.map((done, index) => `
           <button class="set-dot ${done ? "done" : index === setIndex ? "current" : ""}" data-together-jump-set="${profileId}:${index}" type="button">
@@ -3080,7 +3174,7 @@ function maybeShowExerciseIntro(log, item, exerciseItem, entry, template) {
   exerciseIntroOpen = true;
   $("#exerciseIntroStep").textContent = `Exercice ${log.currentExerciseIndex + 1}/${template.items.length}`;
   $("#exerciseIntroName").textContent = entry.performedExerciseName || (exerciseItem && exerciseItem.name) || "Exercice";
-  $("#exerciseIntroMeta").textContent = `${item.sets} series - ${item.minReps}/${item.maxReps} reps - ${fmtWeight(entry.weight || item.weight || 0)}`;
+  $("#exerciseIntroMeta").textContent = `${item.sets} series - ${item.minReps}/${item.maxReps} reps - ${fmtWeight(entryWeightAt(entry, log.currentSetIndex, item.weight))}`;
   setTimeout(() => {
     if (dialog.showModal && !dialog.open) dialog.showModal();
   }, 0);
@@ -3515,12 +3609,12 @@ function bestOneRms() {
   const best = new Map();
   profileLogs().forEach((log) => {
     log.entries.forEach((entry) => {
-      (entry.reps || []).forEach((reps) => {
-        const rm = estimateOneRm(entry.weight, reps);
+      completedSetRows(entry).forEach((row) => {
+        const rm = estimateOneRm(row.weight, row.reps);
         if (!rm) return;
         const previous = best.get(entry.performedExerciseName);
         if (!previous || rm > previous.rm) {
-          best.set(entry.performedExerciseName, { name: entry.performedExerciseName, rm, weight: entry.weight, reps });
+          best.set(entry.performedExerciseName, { name: entry.performedExerciseName, rm, weight: row.weight, reps: row.reps });
         }
       });
     });
@@ -3566,13 +3660,14 @@ function lastExercisePerformances() {
   const latest = new Map();
   completedLogs().forEach((log) => {
     (log.entries || []).forEach((entry) => {
-      const reps = (entry.reps || []).filter((rep, index) => entry.completed && entry.completed[index]);
-      if (!reps.length) return;
+      const rows = completedSetRows(entry);
+      if (!rows.length) return;
+      const sameWeight = rows.every((row) => Math.abs(row.weight - rows[0].weight) < 0.001);
       latest.set(entry.performedExerciseName, {
         name: entry.performedExerciseName,
         date: log.date,
-        weight: entry.weight,
-        reps: reps.join("/"),
+        weight: sameWeight ? rows[0].weight : rows.reduce((best, row) => estimateOneRm(row.weight, row.reps) > estimateOneRm(best.weight, best.reps) ? row : best, rows[0]).weight,
+        reps: rows.map((row) => sameWeight ? row.reps : `${fmtWeight(row.weight)} x ${row.reps}`).join(" / "),
       });
     });
   });
@@ -3682,9 +3777,9 @@ function exerciseRmChartData(limit = 6) {
   const byExercise = new Map();
   completedLogs().forEach((log) => {
     (log.entries || []).forEach((entry) => {
-      const reps = (entry.reps || []).filter((rep, index) => !entry.completed || entry.completed[index]);
-      if (!reps.length) return;
-      const bestRm = Math.max(...reps.map((rep) => estimateOneRm(entry.weight, rep)));
+      const rows = completedSetRows(entry);
+      if (!rows.length) return;
+      const bestRm = Math.max(...rows.map((row) => estimateOneRm(row.weight, row.reps)));
       if (!bestRm) return;
       const key = entry.performedExerciseName || entry.exerciseId || "Exercice";
       if (!byExercise.has(key)) byExercise.set(key, []);
@@ -3866,7 +3961,8 @@ function completeCurrentSet() {
   entry.reps[log.currentSetIndex] = reps;
   if (Number.isFinite(weight)) {
     entry.weight = weight;
-    item.weight = weight;
+    if (!entry.weights) entry.weights = Array(item.sets).fill(item.weight || weight);
+    entry.weights[log.currentSetIndex] = weight;
   }
   propagateFutureSetValues(entry, log.currentSetIndex, reps, weight);
   entry.completed[log.currentSetIndex] = true;
@@ -3927,7 +4023,7 @@ function applyProgression(log) {
   template.items.forEach((item) => {
     const entry = log.entries.find((candidate) => candidate.planItemId === item.id);
     if (!entry) return;
-    const next = nextTarget(item, entry.reps);
+    const next = nextTargetFromEntry(item, entry);
     item.weight = next.weight;
     item.targetReps = next.targetReps;
   });
@@ -4063,6 +4159,7 @@ function compactStateExport(source) {
     entry.weight,
     entry.reps || [],
     entry.completed || [],
+    entry.weights || [],
   ];
   return {
     app: "AERSTRONG",
@@ -4155,6 +4252,7 @@ function inflateCompactState(payload) {
     weight: entry[4],
     reps: entry[5] || [],
     completed: entry[6] || [],
+    weights: entry[7] || [],
   });
   return {
     activeProfileId: data.activeProfileId,
@@ -4604,6 +4702,7 @@ $("#confirmAlternative").addEventListener("click", () => {
   const entry = entryFor(log, item);
   entry.performedExerciseName = selectedAlternativeName;
   entry.weight = fromDisplayWeight($("#alternativeWeight").value || weightInputValue(entry.weight || item.weight || 0));
+  entry.weights = Array(item.sets).fill(entry.weight);
   state.substitutions[item.exerciseId] = { name: selectedAlternativeName, weight: entry.weight };
   $("#alternativeDialog").close();
   activeExercisePlanId = null;
@@ -5655,7 +5754,9 @@ $("#workoutLogEditForm").addEventListener("submit", (event) => {
     if (!entry) return;
     entry.weight = fromDisplayWeight(row.querySelector("[data-edit-log-weight]").value || 0);
     const reps = row.querySelector("[data-edit-log-reps]").value.split(/[\/,; ]+/).filter(Boolean).map((value) => Number(value || 0));
+    const weights = row.querySelector("[data-edit-log-weights]").value.split(/[\/,; ]+/).filter(Boolean).map((value) => fromDisplayWeight(value));
     entry.reps = reps;
+    entry.weights = reps.map((value, index) => Number.isFinite(weights[index]) && weights[index] > 0 ? weights[index] : entry.weight);
     entry.completed = reps.map((value) => value > 0);
   });
   applyProgression(log);
@@ -5774,6 +5875,7 @@ function logEditEntryRows(log) {
     <article class="item-card compact-form" data-edit-log-entry="${entry.id}">
       <strong>${escapeHtml(displayExerciseName(entry.performedExerciseName || "Exercice"))}</strong>
       <label>Poids ${weightUnit()}<input data-edit-log-weight inputmode="decimal" type="number" step="0.5" value="${escapeHtml(weightInputValue(entry.weight || 0))}"></label>
+      <label>Poids par serie ${weightUnit()}<input data-edit-log-weights inputmode="decimal" value="${escapeHtml((entry.weights || []).map((weight) => weightInputValue(weight)).join("/"))}" placeholder="90/90/87.5/85"></label>
       <label>Reps par serie<input data-edit-log-reps inputmode="numeric" value="${escapeHtml((entry.reps || []).join("/"))}" placeholder="8/8/8/8"></label>
     </article>
   `).join("") || `<p class="empty">Aucune performance dans cette seance.</p>`;
@@ -5794,6 +5896,7 @@ function buildManualLogFromTemplate(templateId) {
         exerciseId: item.exerciseId,
         performedExerciseName: (exerciseItem && exerciseItem.name) || "Exercice",
         weight: item.weight,
+        weights: Array(item.sets).fill(item.weight),
         reps: Array(item.sets).fill(item.minReps),
         completed: Array(item.sets).fill(true),
       };
