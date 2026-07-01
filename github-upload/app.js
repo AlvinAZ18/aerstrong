@@ -2,7 +2,7 @@ const storageKey = "forgefit-v4";
 const backupStorageKey = `${storageKey}-backup`;
 const backupMetaKey = `${storageKey}-backup-meta`;
 const protectionPromptKey = `${storageKey}-storage-protection-asked`;
-const appVersion = "v1.9.6";
+const appVersion = "v1.9.7";
 const dataSchemaVersion = 8;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -972,6 +972,7 @@ const i18n = {
   currentSet: "Serie en cours",
   unavailable: "Machine indisponible",
   nextExercise: "Exercice suivant",
+  skipExercise: "Passer l'exercice",
   finishSession: "Fin seance",
   skip: "PASSER",
   options: "Options",
@@ -991,6 +992,7 @@ function t(key) {
     currentSet: "Serie en cours",
     unavailable: "Machine indisponible",
     nextExercise: "Exercice suivant",
+    skipExercise: "Passer l'exercice",
     finishSession: "Fin seance",
     skip: "PASSER",
     options: "Options",
@@ -1031,6 +1033,7 @@ function t(key) {
     currentSet: "Current set",
     unavailable: "Machine unavailable",
     nextExercise: "Next exercise",
+    skipExercise: "Skip exercise",
     finishSession: "Finish workout",
     skip: "SKIP",
     options: "Options",
@@ -1827,6 +1830,7 @@ function currentLog(templateId, scheduledItem = currentScheduledItem()) {
       scheduleId: scheduledItem && scheduledItem.id,
       scheduleKey,
       entries: [],
+      skippedExercises: [],
       currentExerciseIndex: 0,
       currentSetIndex: 0,
       introSeenIndex: -1,
@@ -1852,6 +1856,7 @@ function currentLogForProfile(profileId, templateId, scheduledItem = currentSche
       scheduleId: scheduledItem && scheduledItem.id,
       scheduleKey,
       entries: [],
+      skippedExercises: [],
       currentExerciseIndex: 0,
       currentSetIndex: 0,
       introSeenIndex: -1,
@@ -1889,6 +1894,16 @@ function entryFor(log, item) {
 function currentPlanItem(log) {
   const template = templateById(log.templateId);
   return template && template.items ? template.items[log.currentExerciseIndex] : undefined;
+}
+
+function isExerciseSkipped(log, item) {
+  return !!(log && item && (log.skippedExercises || []).includes(item.id));
+}
+
+function markExerciseSkipped(log, item) {
+  if (!log || !item) return;
+  log.skippedExercises = [...new Set([...(log.skippedExercises || []), item.id])];
+  log.entries = (log.entries || []).filter((entry) => entry.planItemId !== item.id);
 }
 
 function persistActiveTrainingInputs() {
@@ -1937,6 +1952,7 @@ function isLogComplete(log) {
   const template = templateById(log.templateId);
   if (!template || !template.items || !template.items.length) return false;
   return template.items.every((item) => {
+    if (isExerciseSkipped(log, item)) return true;
     const entry = log.entries.find((candidate) => candidate.planItemId === item.id);
     return entry && entry.completed && entry.completed.every(Boolean);
   });
@@ -1946,6 +1962,7 @@ function firstIncompleteExerciseIndex(log) {
   const template = templateById(log.templateId);
   if (!template || !template.items) return -1;
   return template.items.findIndex((item) => {
+    if (isExerciseSkipped(log, item)) return false;
     const entry = log.entries.find((candidate) => candidate.planItemId === item.id);
     return !entry || !entry.completed || entry.completed.some((done) => !done);
   });
@@ -2958,11 +2975,12 @@ function renderTraining() {
       ${template.items.map((planItemEntry, index) => {
         const planExercise = exerciseById(planItemEntry.exerciseId);
         const planEntry = log.entries.find((candidate) => candidate.planItemId === planItemEntry.id);
+        const skipped = isExerciseSkipped(log, planItemEntry);
         const done = planEntry && planEntry.completed && planEntry.completed.every(Boolean);
         return `
-          <button class="${index === log.currentExerciseIndex ? "active" : ""} ${done ? "done" : ""}" data-session-exercise="${index}" type="button">
+          <button class="${index === log.currentExerciseIndex ? "active" : ""} ${done ? "done" : ""} ${skipped ? "skipped" : ""}" data-session-exercise="${index}" type="button">
             <span>${index + 1}</span>
-            <strong>${escapeHtml((planEntry && planEntry.performedExerciseName) || (planExercise && planExercise.name) || "Exercice")}</strong>
+            <strong>${escapeHtml((planEntry && planEntry.performedExerciseName) || (planExercise && planExercise.name) || "Exercice")}${skipped ? " - passe" : ""}</strong>
           </button>
         `;
       }).join("")}
@@ -3000,7 +3018,7 @@ function renderTraining() {
 
     <section class="training-actions">
       <button class="small-button" data-alternative="${item.id}" type="button">${t("unavailable")}</button>
-      <button class="small-button" id="skipExercise" type="button">${t("nextExercise")}</button>
+      <button class="small-button danger" id="skipExercise" type="button">${t("skipExercise")}</button>
     </section>
 
     <button class="finish-fab" id="finishWorkout" type="button">${t("finishSession")}</button>
@@ -4195,6 +4213,7 @@ function compactStateExport(source) {
         t: log.templateId,
         tn: log.templateName,
         sk: log.scheduleKey,
+        sx: log.skippedExercises || [],
         ci: log.currentExerciseIndex,
         cs: log.currentSetIndex,
         f: log.finishedAt,
@@ -4274,6 +4293,7 @@ function inflateCompactState(payload) {
       templateId: log.t,
       templateName: log.tn,
       scheduleKey: log.sk,
+      skippedExercises: log.sx || [],
       currentExerciseIndex: log.ci || 0,
       currentSetIndex: log.cs || 0,
       finishedAt: log.f,
@@ -4610,18 +4630,26 @@ $("#trainingScreen").addEventListener("click", (event) => {
     const template = currentTemplate();
     if (!template) return;
     const log = currentLog(template.id);
-    persistActiveTrainingInputs();
+    const item = currentPlanItem(log);
+    if (item) markExerciseSkipped(log, item);
+    clearInterval(sessionUi.restTimer);
+    sessionUi.phase = "ready";
+    sessionUi.restEndsAt = 0;
+    sessionUi.lastSoundSecond = null;
     const templateItems = template.items || [];
     const afterCurrent = templateItems.findIndex((item, index) => {
       if (index <= log.currentExerciseIndex) return false;
+      if (isExerciseSkipped(log, item)) return false;
       const entry = log.entries.find((candidate) => candidate.planItemId === item.id);
       return !entry || !entry.completed || entry.completed.some((done) => !done);
     });
     if (afterCurrent >= 0) {
       log.currentExerciseIndex = afterCurrent;
       log.currentSetIndex = 0;
+      log.introSeenIndex = log.currentExerciseIndex;
     } else {
-      moveLogToNextIncomplete(log);
+      const moved = moveLogToNextIncomplete(log);
+      if (!moved && isLogComplete(log)) finishLog(log, null);
     }
     saveState();
     render();
@@ -5903,6 +5931,7 @@ function buildManualLogFromTemplate(templateId) {
     }) : [],
     currentExerciseIndex: 0,
     currentSetIndex: 0,
+    skippedExercises: [],
     introSeenIndex: -1,
     startedAt: new Date().toISOString(),
     finishedAt: new Date().toISOString(),
