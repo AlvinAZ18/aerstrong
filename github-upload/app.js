@@ -2,7 +2,7 @@ const storageKey = "forgefit-v4";
 const backupStorageKey = `${storageKey}-backup`;
 const backupMetaKey = `${storageKey}-backup-meta`;
 const protectionPromptKey = `${storageKey}-storage-protection-asked`;
-const appVersion = "v1.9.8";
+const appVersion = "v1.9.9";
 const dataSchemaVersion = 8;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -5809,6 +5809,13 @@ $("#workoutLogEditTemplate").addEventListener("change", () => {
   $("#workoutLogEditEntries").innerHTML = logEditEntryRows(draft);
 });
 
+let activeLogSeriesInput = null;
+
+$("#workoutLogEditEntries").addEventListener("focusin", (event) => {
+  const seriesInput = event.target.closest("[data-edit-log-reps], [data-edit-log-weights]");
+  if (seriesInput) activeLogSeriesInput = seriesInput;
+});
+
 $("#workoutLogEditEntries").addEventListener("input", (event) => {
   const repsInput = event.target.closest("[data-edit-log-reps]");
   const weightsInput = event.target.closest("[data-edit-log-weights]");
@@ -5819,11 +5826,30 @@ $("#workoutLogEditEntries").addEventListener("input", (event) => {
   if (weightsInput) weightsInput.value = formatSeriesInputValue(weightsInput.value, sets, "weights");
 });
 
+$("#workoutLogEditEntries").addEventListener("click", (event) => {
+  const charButton = event.target.closest("[data-series-char]");
+  if (!charButton) return;
+  const row = charButton.closest("[data-edit-log-entry]");
+  const pad = charButton.closest("[data-series-target]");
+  const targetSelector = pad && pad.dataset.seriesTarget === "weights" ? "[data-edit-log-weights]" : "[data-edit-log-reps]";
+  const active = activeLogSeriesInput && row.contains(activeLogSeriesInput)
+    ? activeLogSeriesInput
+    : row.querySelector(targetSelector);
+  if (!active || active.disabled) return;
+  const char = charButton.dataset.seriesChar;
+  const start = active.selectionStart == null ? active.value.length : active.selectionStart;
+  const end = active.selectionEnd == null ? active.value.length : active.selectionEnd;
+  active.value = `${active.value.slice(0, start)}${char}${active.value.slice(end)}`;
+  active.focus();
+  active.setSelectionRange(start + char.length, start + char.length);
+  active.dispatchEvent(new Event("input", { bubbles: true }));
+});
+
 $("#workoutLogEditEntries").addEventListener("change", (event) => {
   const skipped = event.target.closest("[data-edit-log-skipped]");
   if (!skipped) return;
   const row = skipped.closest("[data-edit-log-entry]");
-  row.querySelectorAll("[data-edit-log-weight], [data-edit-log-weights], [data-edit-log-reps]").forEach((input) => {
+  row.querySelectorAll("[data-edit-log-weight], [data-edit-log-weights], [data-edit-log-reps], [data-series-char]").forEach((input) => {
     input.disabled = skipped.checked;
   });
 });
@@ -5938,12 +5964,15 @@ function formatSeriesInputValue(value, sets, mode = "reps") {
   const clean = text.replace(/[^\d.]/g, "");
   if (!clean || !sets) return clean;
   if (mode === "reps" && clean.length <= sets) return clean.split("").join("/");
-  if (clean.length === sets * 2) {
-    const chunks = [];
-    for (let index = 0; index < clean.length; index += 2) chunks.push(clean.slice(index, index + 2));
-    return chunks.join("/");
-  }
   return clean;
+}
+
+function seriesCharPadHtml(target) {
+  return `
+    <div class="series-char-pad" data-series-target="${target}" aria-label="Separateurs de series">
+      ${["/", "-", ",", "."].map((char) => `<button class="mini-key" data-series-char="${char}" type="button">${char}</button>`).join("")}
+    </div>
+  `;
 }
 
 function createEntryForPlanItem(item) {
@@ -5974,7 +6003,9 @@ function logEditEntryRows(log) {
       <label class="check-row"><input data-edit-log-skipped type="checkbox" ${skipped ? "checked" : ""}> Exercice saute</label>
       <label>Poids ${weightUnit()}<input data-edit-log-weight inputmode="decimal" type="number" step="0.5" value="${escapeHtml(weightInputValue(entry.weight || 0))}" ${skipped ? "disabled" : ""}></label>
       <label>Poids par serie ${weightUnit()}<input data-edit-log-weights inputmode="decimal" value="${escapeHtml((entry.weights || []).map((weight) => weightInputValue(weight)).join("/"))}" placeholder="90/90/87.5/85" ${skipped ? "disabled" : ""}></label>
+      ${seriesCharPadHtml("weights")}
       <label>Reps par serie<input data-edit-log-reps inputmode="numeric" value="${escapeHtml((entry.reps || []).join("/"))}" placeholder="8/8/8/8" ${skipped ? "disabled" : ""}></label>
+      ${seriesCharPadHtml("reps")}
     </article>
   `).join("") || `<p class="empty">Aucune performance dans cette seance.</p>`;
 }

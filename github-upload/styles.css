@@ -1507,6 +1507,32 @@ mark {
   min-height: 20px;
 }
 
+.series-char-pad {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: -6px;
+}
+
+.mini-key {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.mini-key:active {
+  transform: translateY(1px);
+  border-color: var(--red);
+}
+
+.mini-key:disabled {
+  opacity: 0.35;
+}
+
 .primary-button,
 .icon-button,
 .small-button,
