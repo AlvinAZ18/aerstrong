@@ -888,6 +888,26 @@ main {
   line-height: 1.4;
 }
 
+.cycle-converter-card {
+  border-color: rgba(var(--accent-rgb), 0.5);
+}
+
+.cycle-converter-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cycle-converter-fields label {
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .cycle-converter-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 .model-meta {
   padding: 10px 12px;
   color: var(--ink);

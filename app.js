@@ -2,7 +2,7 @@ const storageKey = "forgefit-v4";
 const backupStorageKey = `${storageKey}-backup`;
 const backupMetaKey = `${storageKey}-backup-meta`;
 const protectionPromptKey = `${storageKey}-storage-protection-asked`;
-const appVersion = "v1.9.11";
+const appVersion = "v1.9.12";
 const dataSchemaVersion = 8;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -696,6 +696,114 @@ function createConvertedTemplatesFromModel(model) {
       group: cleanGroup,
       cycleGoal: model.goal,
       convertedAt: new Date().toISOString(),
+      items,
+    };
+  });
+  state.templates.push(...templates);
+  templates.forEach((template) => expandedTemplateIds.add(template.id));
+  templateGroupFilter = cleanGroup;
+  builderMode = "sessions";
+  return cleanGroup;
+}
+
+function uniqueTrainingGroup(baseName) {
+  const groups = new Set(profileTrainingGroups().map((group) => group.toUpperCase()));
+  let candidate = baseName;
+  let index = 2;
+  while (groups.has(candidate.toUpperCase())) {
+    candidate = `${baseName} ${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function convertedItemFromCycleItem(sourceItem, goal, sourceTemplate) {
+  const exerciseItem = exerciseById(sourceItem.exerciseId);
+  if (!exerciseItem) return null;
+  const preset = goalPreset(goal);
+  const profile = cycleConversionProfile(goal);
+  const history = performanceForExercise(exerciseItem);
+  const sourceReps = Number(sourceItem.minReps || sourceItem.maxReps || preset.minReps);
+  const estimatedOneRm = history ? history.rm : estimateOneRm(sourceItem.weight, sourceReps);
+  const sourceSets = Number(sourceItem.sets || 0);
+  const targetSets = goal === "fatloss"
+    ? 4
+    : Number(preset.sets || 3) + Number(profile.setsBonus || 0);
+  const sets = Math.max(sourceSets, targetSets);
+  const minReps = Number(profile.minReps || preset.minReps);
+  const maxReps = Number(profile.maxReps || preset.maxReps);
+  const increment = Number(sourceItem.increment || preset.increment || 2.5);
+  const weight = estimatedOneRm > 0
+    ? weightFromOneRm(estimatedOneRm, minReps, profile.intensity, increment)
+    : Number(sourceItem.weight || 0);
+  const item = planItem(exerciseItem.id, sets, minReps, maxReps, weight, increment, profile.rest || preset.rest);
+  item.targetReps = Array(sets).fill(minReps);
+  item.conversion = {
+    source: profile.label,
+    sourceTemplateId: sourceTemplate.id,
+    sourceTemplateName: sourceTemplate.name,
+    sourcePlanItemId: sourceItem.id,
+    sourceWeight: sourceItem.weight,
+    sourceReps,
+    sourceOneRm: estimatedOneRm > 0 ? Math.round(estimatedOneRm * 10) / 10 : 0,
+    sourceLogId: history ? history.log.id : null,
+    sourceDate: history ? history.log.date : null,
+  };
+  return item;
+}
+
+function accessoryForCycle(items, goal) {
+  const usedExerciseIds = new Set(items.map((item) => item.exerciseId));
+  const usedFamilies = new Set(items.map((item) => {
+    const exerciseItem = exerciseById(item.exerciseId);
+    return exerciseItem && exerciseItem.family;
+  }).filter(Boolean));
+  const preferredFamilies = goal === "fatloss"
+    ? ["Abdos", "Epaules", "Trapezes", "Biceps", "Triceps"]
+    : ["Abdos", "Epaules", "Biceps", "Triceps"];
+  const candidate = state.exercises.find((exerciseItem) => !usedExerciseIds.has(exerciseItem.id) && preferredFamilies.includes(exerciseItem.family) && !usedFamilies.has(exerciseItem.family))
+    || state.exercises.find((exerciseItem) => !usedExerciseIds.has(exerciseItem.id) && preferredFamilies.includes(exerciseItem.family));
+  return candidate || null;
+}
+
+function createConvertedCycle(sourceGroup, goal) {
+  const sourceTemplates = profileTemplates().filter((template) => (template.group || "General") === sourceGroup);
+  if (!sourceTemplates.length) return null;
+  const profile = cycleConversionProfile(goal);
+  const year = new Date(`${todayKey}T12:00:00`).getFullYear();
+  const cleanGroup = addTrainingGroup(uniqueTrainingGroup(`${goalPresetLabel(goal)} ${year}`));
+  const templates = sourceTemplates.map((sourceTemplate) => {
+    const items = (sourceTemplate.items || [])
+      .map((sourceItem) => convertedItemFromCycleItem(sourceItem, goal, sourceTemplate))
+      .filter(Boolean);
+    if (items.length < 5) {
+      const accessory = accessoryForCycle(items, goal);
+      if (accessory) {
+        const accessoryItem = convertedProgramItem(accessory.name, goalPreset(goal), goal);
+        if (accessoryItem) {
+          accessoryItem.sets = 3;
+          accessoryItem.targetReps = Array(3).fill(accessoryItem.minReps);
+          accessoryItem.conversion = { source: profile.label, added: "accessoire ajoute au cycle" };
+          items.push(accessoryItem);
+        }
+      }
+    }
+    if (profile.cardio) {
+      const cardio = ensureCardioExercise();
+      const cardioItem = planItem(cardio.id, 1, profile.cardioMinutes, profile.cardioMinutes, 0, 0, 30);
+      cardioItem.targetReps = [profile.cardioMinutes];
+      cardioItem.conversion = { source: profile.label, added: "cardio ajoute au cycle", minutes: profile.cardioMinutes };
+      items.push(cardioItem);
+    }
+    return {
+      id: id(),
+      profileId: state.activeProfileId,
+      name: uniqueTemplateName(`${sourceTemplate.name} ${goalPresetLabel(goal)}`),
+      group: cleanGroup,
+      cycleGoal: goal,
+      convertedAt: new Date().toISOString(),
+      sourceCycleGroup: sourceGroup,
+      sourceTemplateId: sourceTemplate.id,
       items,
     };
   });
@@ -3526,7 +3634,38 @@ function renderBuilder() {
 function renderTrainingModels() {
   const panel = $("#programModelList");
   if (!panel) return;
-  panel.innerHTML = programModels().map((model) => `
+  const groups = profileTrainingGroups().filter((group) => profileTemplates().some((template) => (template.group || "General") === group));
+  const selectedGroup = groups.includes(templateGroupFilter) ? templateGroupFilter : groups[0];
+  const conversionCard = groups.length ? `
+    <article class="model-card cycle-converter-card">
+      <div>
+        <span>${isEnglish() ? "YOUR CURRENT CYCLE" : "TON CYCLE ACTUEL"}</span>
+        <strong>${isEnglish() ? "Convert an existing cycle" : "Convertir un cycle existant"}</strong>
+        <p>${isEnglish() ? "Your exercises stay in place. Loads, repetitions and rest are recalculated from your data; a useful accessory and cardio are added when needed." : "Tes exercices restent en place. Les charges, repetitions et repos sont recalcules depuis tes donnees ; un accessoire utile et le cardio sont ajoutes quand necessaire."}</p>
+      </div>
+      <div class="cycle-converter-fields">
+        <label>${isEnglish() ? "Cycle to convert" : "Cycle a convertir"}
+          <select id="cycleConvertSource">
+            ${groups.map((group) => `<option value="${escapeHtml(group)}" ${group === selectedGroup ? "selected" : ""}>${escapeHtml(displayFamily(group))}</option>`).join("")}
+          </select>
+        </label>
+        <label>${isEnglish() ? "New goal" : "Nouvel objectif"}
+          <select id="cycleConvertGoal">
+            <option value="fatloss">${isEnglish() ? "Fat loss" : "Seche"}</option>
+            <option value="muscle">${isEnglish() ? "Muscle gain" : "Prise de masse"}</option>
+            <option value="maintain">${isEnglish() ? "Maintain" : "Maintien"}</option>
+            <option value="strength">${isEnglish() ? "Strength" : "Force"}</option>
+          </select>
+        </label>
+      </div>
+      <div class="conversion-preview">
+        <span>${isEnglish() ? "A new group is created. Your old cycle and its history are never changed." : "Un nouveau groupe sera cree. Ton ancien cycle et son historique ne seront jamais modifies."}</span>
+        <small>${isEnglish() ? "For fat loss: 12-18 reps, shorter rests, one extra accessory only when the workout is short, then 15 min of cardio." : "Pour la seche : 12-18 reps, repos courts, un accessoire en plus seulement si la seance est courte, puis 15 min de cardio."}</small>
+      </div>
+      <button class="primary-button" data-convert-cycle type="button">${isEnglish() ? "Create my converted cycle" : "Creer mon cycle converti"}</button>
+    </article>
+  ` : "";
+  panel.innerHTML = conversionCard + programModels().map((model) => `
     <article class="model-card">
       <div>
         <span>${escapeHtml(model.group)}</span>
@@ -5620,6 +5759,16 @@ $("#trainingGroupFilters").addEventListener("click", (event) => {
 });
 
 $("#programModelList").addEventListener("click", (event) => {
+  const convertButton = event.target.closest("[data-convert-cycle]");
+  if (convertButton) {
+    const source = $("#cycleConvertSource");
+    const goal = $("#cycleConvertGoal");
+    const createdGroup = createConvertedCycle(source && source.value, goal && goal.value);
+    if (!createdGroup) return;
+    saveState();
+    render();
+    return;
+  }
   const modelButton = event.target.closest("[data-create-model]");
   if (!modelButton) return;
   createProgramModel(modelButton.dataset.createModel);
