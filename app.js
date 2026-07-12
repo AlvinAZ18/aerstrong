@@ -2,7 +2,7 @@ const storageKey = "forgefit-v4";
 const backupStorageKey = `${storageKey}-backup`;
 const backupMetaKey = `${storageKey}-backup-meta`;
 const protectionPromptKey = `${storageKey}-storage-protection-asked`;
-const appVersion = "v1.9.10";
+const appVersion = "v1.9.11";
 const dataSchemaVersion = 8;
 const brandMigrationKey = "aerstrongThemeMigrated";
 const todayKey = localDateKey(new Date());
@@ -424,12 +424,58 @@ function exerciseByName(name) {
 
 function goalPreset(goal) {
   const presets = {
-    fatloss: { sets: 3, minReps: 12, maxReps: 15, rest: 60, increment: 1 },
+    fatloss: { sets: 4, minReps: 12, maxReps: 18, rest: 45, increment: 1 },
     muscle: { sets: 4, minReps: 8, maxReps: 12, rest: 90, increment: 2.5 },
     maintain: { sets: 3, minReps: 8, maxReps: 12, rest: 90, increment: 2.5 },
     strength: { sets: 4, minReps: 5, maxReps: 8, rest: 150, increment: 2.5 },
   };
   return presets[goal] || presets.muscle;
+}
+
+function cycleConversionProfile(goal) {
+  const profiles = {
+    fatloss: {
+      minReps: 12,
+      maxReps: 18,
+      setsBonus: 1,
+      rest: 45,
+      intensity: 0.9,
+      cardio: true,
+      cardioMinutes: 15,
+      label: "conversion seche",
+    },
+    muscle: {
+      minReps: 8,
+      maxReps: 12,
+      setsBonus: 0,
+      rest: 90,
+      intensity: 0.96,
+      cardio: false,
+      cardioMinutes: 0,
+      label: "conversion hypertrophie",
+    },
+    maintain: {
+      minReps: 8,
+      maxReps: 12,
+      setsBonus: 0,
+      rest: 75,
+      intensity: 0.92,
+      cardio: false,
+      cardioMinutes: 10,
+      label: "conversion maintien",
+    },
+    strength: {
+      minReps: 5,
+      maxReps: 8,
+      setsBonus: 0,
+      rest: 150,
+      intensity: 1,
+      cardio: false,
+      cardioMinutes: 0,
+      label: "conversion force",
+    },
+  };
+  return profiles[goal] || profiles.muscle;
 }
 
 function defaultWeightForExercise(name) {
@@ -458,6 +504,78 @@ function defaultWeightForExercise(name) {
     "Pull-over poulie": 25,
   };
   return weights[name] == null ? 30 : weights[name];
+}
+
+function roundToStep(value, step = 2.5) {
+  const numericStep = Number(step || 1);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.max(numericStep, Math.round(value / numericStep) * numericStep);
+}
+
+function weightFromOneRm(oneRm, reps, intensity = 1, increment = 2.5) {
+  const target = Number(oneRm || 0) / (1 + Number(reps || 0) / 30) * Number(intensity || 1);
+  return roundToStep(target, increment);
+}
+
+function exerciseIdentityNames(exerciseItem) {
+  if (!exerciseItem) return new Set();
+  return new Set([exerciseItem.name, ...(exerciseItem.alternatives || [])].filter(Boolean).map((name) => normalizeSearch(name)));
+}
+
+function performanceForExercise(exerciseItem) {
+  if (!exerciseItem) return null;
+  const names = exerciseIdentityNames(exerciseItem);
+  const candidates = [];
+  profileLogs()
+    .filter((log) => log.finishedAt && !log.archived && completedSetCount(log) > 0)
+    .forEach((log) => {
+      (log.entries || []).forEach((entry) => {
+        const entryName = normalizeSearch(entry.performedExerciseName || "");
+        if (entry.exerciseId !== exerciseItem.id && !names.has(entryName)) return;
+        completedSetRows(entry, planItemForEntry(log, entry) || {}).forEach((row) => {
+          const rm = estimateOneRm(row.weight, row.reps);
+          if (rm > 0) candidates.push({ log, entry, row, rm });
+        });
+      });
+    });
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => b.rm - a.rm || new Date(b.log.finishedAt) - new Date(a.log.finishedAt));
+  return candidates[0];
+}
+
+function ensureCardioExercise() {
+  const existing = exerciseByName("Cardio modere");
+  if (existing) return existing;
+  const cardio = exercise(id(), "Cardio modere", "Autre", "Poids du corps", 30, []);
+  state.exercises.push(cardio);
+  return cardio;
+}
+
+function convertedProgramItem(exerciseName, preset, goal) {
+  const found = exerciseByName(exerciseName) || state.exercises[0];
+  const profile = cycleConversionProfile(goal);
+  if (!found) return null;
+  const history = performanceForExercise(found);
+  const sets = Math.max(1, Number(preset.sets || 3) + Number(profile.setsBonus || 0));
+  const minReps = Number(profile.minReps || preset.minReps);
+  const maxReps = Number(profile.maxReps || preset.maxReps);
+  const increment = Number(preset.increment || 2.5);
+  const baseWeight = history
+    ? weightFromOneRm(history.rm, minReps, profile.intensity, increment)
+    : defaultWeightForExercise(exerciseName);
+  const item = planItem(found.id, sets, minReps, maxReps, baseWeight, increment, profile.rest || preset.rest);
+  item.targetReps = Array(sets).fill(minReps);
+  item.conversion = history ? {
+    source: profile.label,
+    sourceLogId: history.log.id,
+    sourceDate: history.log.date,
+    sourceWeight: history.row.weight,
+    sourceReps: history.row.reps,
+    sourceOneRm: Math.round(history.rm * 10) / 10,
+  } : {
+    source: "poids par defaut",
+  };
+  return item;
 }
 
 function makeProgramItem(exerciseName, preset) {
@@ -554,6 +672,40 @@ function createTemplatesFromDefinitions(definitions, preset, group) {
   });
 }
 
+function createConvertedTemplatesFromModel(model) {
+  const preset = goalPreset(model.goal);
+  const profile = cycleConversionProfile(model.goal);
+  const cleanGroup = addTrainingGroup(`${model.group} ${new Date(`${todayKey}T12:00:00`).getFullYear()}`);
+  const existing = new Set(profileTemplates().map((template) => template.name.toUpperCase()));
+  const templates = model.sessions.map((definition, sessionIndex) => {
+    const templateId = id();
+    const name = existing.has(definition.name.toUpperCase()) ? uniqueTemplateName(definition.name) : definition.name.toUpperCase();
+    existing.add(name);
+    const items = definition.exercises.map((nameValue) => convertedProgramItem(nameValue, preset, model.goal)).filter(Boolean);
+    if (profile.cardio && sessionIndex < model.sessions.length) {
+      const cardio = ensureCardioExercise();
+      const cardioItem = planItem(cardio.id, 1, profile.cardioMinutes, profile.cardioMinutes, 0, 0, 30);
+      cardioItem.targetReps = [profile.cardioMinutes];
+      cardioItem.conversion = { source: "cardio ajoute au cycle", minutes: profile.cardioMinutes };
+      items.push(cardioItem);
+    }
+    return {
+      id: templateId,
+      profileId: state.activeProfileId,
+      name,
+      group: cleanGroup,
+      cycleGoal: model.goal,
+      convertedAt: new Date().toISOString(),
+      items,
+    };
+  });
+  state.templates.push(...templates);
+  templates.forEach((template) => expandedTemplateIds.add(template.id));
+  templateGroupFilter = cleanGroup;
+  builderMode = "sessions";
+  return cleanGroup;
+}
+
 function programModels() {
   return [
     {
@@ -613,9 +765,66 @@ function programModels() {
 function createProgramModel(modelId) {
   const model = programModels().find((item) => item.id === modelId);
   if (!model) return;
-  createTemplatesFromDefinitions(model.sessions, goalPreset(model.goal), model.group);
-  templateGroupFilter = model.group;
+  templateGroupFilter = createConvertedTemplatesFromModel(model) || model.group;
   builderMode = "sessions";
+}
+
+function conversionPreviewForModel(model) {
+  const preset = goalPreset(model.goal);
+  const profile = cycleConversionProfile(model.goal);
+  const exercises = model.sessions.flatMap((session) => session.exercises);
+  const converted = exercises.map((nameValue) => {
+    const exerciseItem = exerciseByName(nameValue);
+    const history = performanceForExercise(exerciseItem);
+    const minReps = Number(profile.minReps || preset.minReps);
+    const weight = history
+      ? weightFromOneRm(history.rm, minReps, profile.intensity, preset.increment)
+      : defaultWeightForExercise(nameValue);
+    return { name: nameValue, history, weight, minReps };
+  });
+  const historyCount = converted.filter((item) => item.history).length;
+  const sample = converted.find((item) => item.history) || converted[0];
+  return {
+    total: converted.length,
+    historyCount,
+    sample,
+    profile,
+    preset,
+  };
+}
+
+function conversionPreviewHtml(model) {
+  const preview = conversionPreviewForModel(model);
+  const sample = preview.sample;
+  const source = preview.historyCount
+    ? isEnglish()
+      ? `${preview.historyCount}/${preview.total} loads based on your history`
+      : `${preview.historyCount}/${preview.total} charges basees sur ton historique`
+    : isEnglish()
+      ? "No direct history: cautious starting loads"
+      : "Aucun historique direct : poids de depart prudents";
+  const sampleText = sample
+    ? `${displayExerciseName(sample.name)} : ${fmtWeight(sample.weight)} x ${sample.minReps}${sample.history ? ` ${isEnglish() ? "from" : "depuis"} ${fmtWeight(sample.history.row.weight)} x ${sample.history.row.reps}` : isEnglish() ? " default" : " par defaut"}`
+    : isEnglish() ? "Complete workouts to refine the loads." : "Ajoute des seances terminees pour affiner les charges.";
+  const cardioText = preview.profile.cardio ? ` - cardio ${preview.profile.cardioMinutes} min` : "";
+  return `
+    <div class="conversion-preview">
+      <span>${escapeHtml(source)}</span>
+      <small>${escapeHtml(sampleText)}</small>
+      <small>${preview.preset.sets + preview.profile.setsBonus} ${isEnglish() ? "sets" : "series"} - ${preview.profile.minReps}/${preview.profile.maxReps} reps - ${isEnglish() ? "rest" : "repos"} ${restLabel(preview.profile.rest)}${cardioText}</small>
+    </div>
+  `;
+}
+
+function conversionSourceLabel(item) {
+  if (!item || !item.conversion) return "";
+  if (item.conversion.sourceWeight) {
+    return ` - ${item.conversion.sourceDate || ""} : ${fmtWeight(item.conversion.sourceWeight)} x ${item.conversion.sourceReps}`;
+  }
+  if (item.conversion.minutes) return ` - cardio ${item.conversion.minutes} min`;
+  if (!item.conversion.source) return "";
+  if (isEnglish() && item.conversion.source === "poids par defaut") return " - default load";
+  return ` - ${item.conversion.source}`;
 }
 
 function onboardingProgramDefinitions(frequency) {
@@ -3275,7 +3484,8 @@ function renderBuilder() {
       <div class="template-items">
         ${template.items.map((item) => {
           const exercise = exerciseById(item.exerciseId);
-          return `<div class="set-row"><span>${escapeHtml(exercise && exercise.name)} - ${item.sets} series - ${item.minReps}/${item.maxReps} reps - ${fmtWeight(item.weight)} - repos ${restLabel(item.rest || (exercise && exercise.rest) || 0)}</span><div class="button-row tight-row"><button class="small-button" data-move-item="${template.id}:${item.id}:-1" type="button">↑</button><button class="small-button" data-move-item="${template.id}:${item.id}:1" type="button">↓</button><button class="small-button" data-edit-item="${template.id}:${item.id}" type="button">Modifier</button><button class="small-button danger" data-remove-item="${template.id}:${item.id}" type="button">Suppr.</button></div></div>`;
+          const conversion = conversionSourceLabel(item);
+          return `<div class="set-row"><span>${escapeHtml(exercise && exercise.name)} - ${item.sets} series - ${item.minReps}/${item.maxReps} reps - ${fmtWeight(item.weight)} - repos ${restLabel(item.rest || (exercise && exercise.rest) || 0)}${escapeHtml(conversion)}</span><div class="button-row tight-row"><button class="small-button" data-move-item="${template.id}:${item.id}:-1" type="button">↑</button><button class="small-button" data-move-item="${template.id}:${item.id}:1" type="button">↓</button><button class="small-button" data-edit-item="${template.id}:${item.id}" type="button">Modifier</button><button class="small-button danger" data-remove-item="${template.id}:${item.id}" type="button">Suppr.</button></div></div>`;
         }).join("")}
       </div>
       </div>
@@ -3324,6 +3534,7 @@ function renderTrainingModels() {
         <p>${escapeHtml(model.description)}</p>
       </div>
       <div class="model-meta">${escapeHtml(model.meta)}</div>
+      ${conversionPreviewHtml(model)}
       <button class="primary-button" data-create-model="${model.id}" type="button">Ajouter ce modele</button>
     </article>
   `).join("");
@@ -4168,6 +4379,7 @@ function compactStateExport(source) {
     item.increment,
     item.rest,
     item.targetReps || [],
+    item.conversion || null,
   ];
   const compactEntry = (entry) => [
     entry.id,
@@ -4202,6 +4414,8 @@ function compactStateExport(source) {
         p: template.profileId,
         n: template.name,
         g: template.group,
+        cg: template.cycleGoal,
+        ca: template.convertedAt,
         i: (template.items || []).map(compactItem),
       })),
       schedule: (source.schedule || []).map((item) => [item.id, item.profileId, item.date, item.templateId, item.repeatWeekly ? 1 : 0]),
@@ -4262,6 +4476,7 @@ function inflateCompactState(payload) {
     increment: item[6],
     rest: item[7],
     targetReps: item[8] || [],
+    conversion: item[9] || null,
   });
   const inflateEntry = (entry) => ({
     id: entry[0],
@@ -4282,6 +4497,8 @@ function inflateCompactState(payload) {
       profileId: template.p,
       name: template.n,
       group: template.g,
+      cycleGoal: template.cg,
+      convertedAt: template.ca,
       items: (template.i || []).map(inflateItem),
     })),
     schedule: (data.schedule || []).map((item) => ({ id: item[0], profileId: item[1], date: item[2], templateId: item[3], repeatWeekly: Boolean(item[4]) })),
